@@ -317,3 +317,37 @@ Key plans:
 ### Rate Limits Observed
 - `sendotp` (prod mobile): 5 attempts per 300 seconds per phone number
 - OTP TTL: ~120 seconds (consistently expired before use in this session)
+
+---
+
+## 11. Final Findings (2026-09-27) — UAT Auth Exhaustion
+
+### UAT OTP Gateway — Sandbox (Does Not Deliver)
+The UAT email and SMS OTP gateway does not deliver to real addresses. All attempts via `sendotp` returned `{"code":0,"message":"Email/SMS successfully sent"}` but OTPs never arrived at `fibernetworkworks@gmail.com` or `+917709234006` / `+918459053782`. The UAT environment uses a mock/sandbox delivery service.
+
+### All UAT OTP-Free Auth Paths Tried and Failed
+| Path | Result |
+|------|--------|
+| `v1/user/register/otpLess` | 404 Not Found (inactive on UAT) |
+| `v1/user/guestUserLogin` | 401 "Authorization failed" — requires pre-existing JWT |
+| `v1/user/guestEmailMobileLogin` | 404 Not Found |
+| `v1/user/emailLogin` | 404 Not Found |
+| `v1/user/login` | 404 Not Found |
+| `v1/user/passwordLogin` | 404 Not Found |
+| `v1/user/shorttoken` | 400 "appDeviceId is required" — requires device registered via existing session |
+| `v1/user/registergoogle` | 400 "id_token is required" — requires browser Google OAuth2 flow |
+| Static test OTPs (123456, 000000, 111111, etc.) | 400 "Either OTP is not valid or has expired" |
+
+### UAT SPAPI Confirmation
+`spapi-uat-gcp.zee5.com/singlePlayback/v2/getDetails/secure` returns `401 "Token not found"` for:
+- UAT platform token (HS256)
+- Prod registered user JWT (RS256)
+Same subscription gate applies on UAT as on prod.
+
+### `registergoogle` Field Requirements
+Both prod and UAT require `id_token` (Google OAuth2 ID token from browser flow). Zee5's Google OAuth client ID is in classes6.dex (not extracted). Even if obtained, would yield a free account with no subscription — SPAPI gate still applies.
+
+### Research Conclusion
+The DRM chain is fully documented. The SPAPI subscription gate is the **final confirmed hard blocker** on both prod and UAT environments. No bypass path exists without:
+1. An active paid Zee5 SVOD subscription (prod path), OR
+2. A UAT user JWT (blocked: OTP sandbox) + UAT order-bff access (blocked: proxy) for the ₹1 test plan activation
