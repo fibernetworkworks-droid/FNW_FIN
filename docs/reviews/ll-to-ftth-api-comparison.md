@@ -93,15 +93,40 @@ Ordered rough severity ↓.
 
 ---
 
-## 6. On `0724-2459222` (Akola)
+## 6. On `0724-2459222` (Akola) and confirmed copper LL→FTTH DSCM flow
 
-The DSCM handoff flagged this as a blocker. It isn't a code problem.
+### 6.1 Confirmed correct DSCM flow for copper LL→FTTH
 
+The correct DSCM entry point for copper landline → FTTH is the **Shift flow**, not `changeMainProdCheckBsnl`. The flow accepts just a landline number at the first step:
+
+```
+1. frServiceInfoCheck?subsNbr=<landline>  →  subsId + subscriber details
+2. subsShiftingCheckBsnl(subsId)          →  shiftingFlag: "Y"/"N"
+3. qryOfferForShifting(subsId)            →  plan list
+4. subsShiftingBsnl(subsId, planId, ...)  →  submit order
+```
+
+`frServiceInfoCheck` is the single DSCM entry point that accepts a bare landline number. `subsShiftingCheckBsnl` requires the numeric `subsId` returned by step 1 — passing a landline directly to it (`ldNbr`, `phoneNbr`, `accessNbr`, `subsNbr`) returns `41600024` (required param null).
+
+### 6.2 `frServiceInfoCheck` is currently down (BSNL server-side outage)
+
+As of 2026-09-27, `frServiceInfoCheck` returns `{"returnCode":"7070001","returnMsg":"..."}` for **every number tested**, including known active FTTH subscribers in franchise 307710:
+
+| Number tested | Status in franchise | frServiceInfoCheck result |
+|---|---|---|
+| `07242992056` | Active FTTH subscriber | `7070001` |
+| `07242992349` | Active FTTH subscriber | `7070001` |
+| `07242459222` | Target (copper LL) | `7070001` |
+
+`7070001` is a BSNL internal/unknown server error — not an auth failure, not a territory issue. The endpoint is broken on BSNL's side. Until it is restored, step 1 of the Shift flow is blocked regardless of credentials or landline number.
+
+### 6.3 `07242459222` territory status
+
+The territory finding from a previous session (when `frServiceInfoCheck` was working) stands:
 - `frServiceInfoCheck?subsNbr=07242459222` returned `{"returnCode":"1","returnMsg":"Sorry, the business is out of the service area."}`.
-- In franchisee terms this means: **the line exists at BSNL but is not bound to franchise 307710** (Akola FIBER NE07710, exchange `AKLAKC`). It's in another franchise's territory.
-- The FNW app's own gate would reach the same conclusion via a different route — `CheckCanStartFlow` would either fail or the line wouldn't appear in this franchise's `qrySubsPageTree`.
-- Neither integration path — CRM-BFM or DSCM — legitimately converts a subscriber outside the operator's franchise.
-- If the customer wants FTTH: the request goes through whichever franchise the line is bound to. If FNW believes the mapping is wrong (the line physically sits in Akola but is administratively mapped elsewhere), that's a territory-correction request to raise with BSNL's franchisee support, referencing `subsNbr 07242459222`, exchange `AKLAKC`, franchise `307710`, and `returnCode:"1"`.
+- **The line exists at BSNL but is not bound to franchise 307710** (Akola FIBER NE07710, exchange `AKLAKC`).
+- Neither DSCM nor CRM-BFM legitimately converts a subscriber outside the operator's franchise territory.
+- Once `frServiceInfoCheck` is restored: re-test to confirm the `returnCode:"1"` is still current. If so, raise a territory-correction request with BSNL franchisee support referencing `subsNbr 07242459222`, exchange `AKLAKC`, franchise `307710`, and `returnCode:"1"`.
 
 ---
 
