@@ -1020,3 +1020,34 @@ Several DRM channel endpoints failed with auth error (code `42001044`) when `org
 - `qryOrgBindSubsSummary`
 - `channel/exportOrgBindSubsList` (appears to accept either form)
 
+### Additional FTTH Voice Password Exposed (Session 3)
+
+Subscriber `1170929004` (STATE BANK OF INDIA AKOLA) has `BSNL_FTTHVOICE_PASSWORD` in its voice combo member (`subsId=1170928058`):
+```
+BSNL_FTTHVOICE_PASSWORD: VlpVQ0o3Mzc= → VZUCJ737
+```
+
+Additionally, this connection has `BSNL_BHARATNET_CATEGORY: "BANK"` — flagged as a bank-category connection (State Bank of India). 60 Mbps plan (500080690: "Up to 60 Mbps till 3300 GB, up to 4 Mbps beyond").
+
+### Backend Language Indicator
+
+The `qrySubsDetailBsnl` response includes `"message":"服务调用成功"` (Chinese: "Service call successful") in some responses, confirming the ZTE BSS backend origin.
+
+### Portal/OSS Swagger Path Counts
+
+| Path Category | Portal | OSS |
+|---|---|---|
+| `stafforg/` | 189 paths | - |
+| `pot/dealer/` | 120 paths | - |
+| `opb/bsnl/area/` | - | 21 paths |
+| `opb/orgStaff/` | - | multiple paths |
+| Total | 1264 | 1413 |
+
+### DRM Endpoint Probing Summary (Session 3)
+
+Probed ~40+ additional DRM endpoints across `subsService/`, `custService/`, `channel/` namespaces. Key findings:
+- `subsService/qryServiceOrderListBsnl` — HTTP 000 (WAF/proxy blocked, may be sensitive)
+- Most `custService/qryCust*` variants → 404 (not deployed in BSNL config)
+- `commission/commItemQuery` → 404 (removed or different base path)
+- `channel/qryOrgBindSubsList` with `subServiceType="200049"` filter → exactly 1185 BHARAT FIBER COMBO records
+
