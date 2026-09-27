@@ -9,20 +9,34 @@
 // Step 4 (subsShiftingBsnl) places a real order and is deliberately NOT here: the only paths
 // this script can call are the three in READ_ONLY below.
 //
-// Run it on the VPS (not from a Claude cloud session). Credentials come from the environment
-// only, never the command line, and are never printed:
+// Credentials come from the environment only, never the command line, and are never printed.
+// Easiest: capture one login in the DSCM app (HTTP Toolkit / PCAPdroid), copy the SESSION cookie,
+// and skip the login entirely:
 //
 //   DSCM_SESSION=<SESSION cookie value>  node dscm-shift-readonly-check.mjs 07242459222
-// or, to log in first:
+//
+// or let the script log in (only if you know the login body this build expects):
 //   DSCM_STAFF_CODE=... DSCM_STAFF_PWD=... DSCM_ORG_ID=...  node dscm-shift-readonly-check.mjs 07242459222
+//
+// If the same capture shows the Shift paths differ from the defaults above, point the script at the
+// real ones — paste them verbatim, a leading "/portal/drm/api/..." is fine:
+//   DSCM_STEP1_PATH=... DSCM_STEP2_PATH=... DSCM_STEP3_PATH=...  node dscm-shift-readonly-check.mjs 07242459222
 //
 // The output holds only return codes, the subsId, the shifting flag and plan ids/names/prices,
 // so it can be pasted back into a chat. Exit code: 0 all three steps answered, 1 anything else.
-// Needs Node 18+ (built-in fetch).
+// Needs Node 18+ (built-in fetch). Runs anywhere that can reach the DSCM host.
 
 const BASE = (process.env.DSCM_BASE || 'https://wsc.cdr.bsnl.co.in/portal/drm/api').replace(/\/+$/, '');
-const READ_ONLY = new Set(['ding/frServiceInfoCheck', 'ding/subsShiftingCheckBsnl', 'ding/qryOfferForShifting']);
 const TIMEOUT_MS = 30000;
+
+// The three Shift steps. The defaults are the handoff's guess (docs/reviews/ll-to-ftth-api-comparison.md
+// §6); if a phone capture shows different paths, override each with an env var — no code change.
+// A leading '/' means "from the host root", so a captured "/portal/drm/api/ding/..." works verbatim.
+const STEP1 = process.env.DSCM_STEP1_PATH || 'ding/frServiceInfoCheck';   // GET  ?subsNbr=
+const STEP2 = process.env.DSCM_STEP2_PATH || 'ding/subsShiftingCheckBsnl'; // POST {subsId}
+const STEP3 = process.env.DSCM_STEP3_PATH || 'ding/qryOfferForShifting';   // POST {subsId}
+// Only these three paths may be called. The submit step (subsShiftingBsnl) is never in this set.
+const READ_ONLY = new Set([STEP1, STEP2, STEP3]);
 
 const KNOWN = {
   '0': 'success',
@@ -103,7 +117,10 @@ async function login() {
 
 async function call(path, { query = null, body = null, session }) {
   if (!READ_ONLY.has(path)) throw new Error(`refusing ${path}: not a read-only step`);
-  const url = `${BASE}/${path}${query ? '?' + new URLSearchParams(query) : ''}`;
+  // A path from a capture may be host-root-absolute ("/portal/drm/api/ding/..."); otherwise it is
+  // relative to BASE. Either way it is one of the three READ_ONLY steps, checked above.
+  const root = path.startsWith('/') ? new URL(BASE).origin : BASE;
+  const url = `${root}${path.startsWith('/') ? path : '/' + path}${query ? '?' + new URLSearchParams(query) : ''}`;
   const res = await fetch(url, {
     method: body ? 'POST' : 'GET',
     headers: { Accept: 'application/json', Cookie: `SESSION=${session}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -121,7 +138,7 @@ async function main() {
   console.log(`DSCM Shift read-only check for ${landline}, ${new Date().toISOString()}`);
   const session = process.env.DSCM_SESSION || await login();
 
-  const info = await call('ding/frServiceInfoCheck', { query: { subsNbr: landline }, session });
+  const info = await call(STEP1, { query: { subsNbr: landline }, session });
   const subsId = find(info.json, 'subsId');
   if (!info.ok || !subsId) {
     console.log(`Stopped at step 1: ${subsId ? '' : 'no subsId. '}Steps 2-3 need it.`);
@@ -129,10 +146,10 @@ async function main() {
   }
   console.log(`  subsId ${subsId}`);
 
-  const check = await call('ding/subsShiftingCheckBsnl', { body: { subsId }, session });
+  const check = await call(STEP2, { body: { subsId }, session });
   console.log(`  shiftingFlag ${find(check.json, 'shiftingFlag') ?? '(absent)'}`);
 
-  const offers = await call('ding/qryOfferForShifting', { body: { subsId }, session });
+  const offers = await call(STEP3, { body: { subsId }, session });
   const list = firstList(offers.json) || [];
   console.log(`  ${list.length} plan(s)`);
   for (const p of list.slice(0, 20)) {

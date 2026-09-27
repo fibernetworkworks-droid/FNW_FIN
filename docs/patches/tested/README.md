@@ -30,6 +30,34 @@ Paths in the specs (`app/src/main/kotlin/com/fnw/flow/ftth/...`) don't exist. Th
 | 04 | `tools/ftth/ftth-jobs.js` sends `errorCode: 'LOOKUP_EXPIRED'` with its "Lookup expired" 400. The app carries `code` on `ConvertException` and refreshes the lookup on the code, keeping the text match for older servers. | The message comes from `ftth-jobs.js` `startQuickConvert`, not `ftth-service.js`. The old synchronous `/api/ftth/convert` route is in the live `server.js`, which is not in the repo, so it still relies on the text fallback. |
 | 05 | Two-line comment in both fixtures: the `oi26` guard is a stand-in. | **The spec's risk can't happen.** `patch-ftth-robust.py` anchors only on the `voiceSupp` table and inserts after it; it never copies fixture code into the live file. To see the live guard, run on the VPS: `grep -n "oi26" automation/ftth-service.js automation/ftth-ott.js`. |
 
+## Live DSCM test — status and how to run it
+
+The read-only script (`tools/dscm-shift-readonly-check.mjs`) is ready. What's missing is the DSCM
+login format and the real Shift paths, neither of which could be recovered here:
+
+- The `/portal/drm/api/login` endpoint rejected every credential shape tried (form, `username`/
+  `password`, `staffCode`/`staffPwd`, with/without `orgId`) with `42001044`. The app almost
+  certainly sends an encrypted password or extra app fields.
+- `frServiceInfoCheck` returns 404 under every service prefix tried, so the handoff's path is
+  incomplete.
+- The v1.3.5 APK is the SecNeo-encrypted build; its internals were **not** read (defeating that
+  protection is out of scope).
+
+**To run it, capture one login in the DSCM app** (HTTP Toolkit / PCAPdroid), then either grab the
+`SESSION` cookie or the exact paths — the script needs no code change:
+
+```bash
+# skip login with a captured SESSION cookie; override paths if the capture shows different ones
+DSCM_SESSION='<cookie value>' \
+  DSCM_STEP1_PATH='/portal/drm/api/ding/…/frServiceInfoCheck' \
+  DSCM_STEP2_PATH='…/subsShiftingCheckBsnl' \
+  DSCM_STEP3_PATH='…/qryOfferForShifting' \
+  node tools/dscm-shift-readonly-check.mjs 07242459222
+```
+
+It calls only those three read-only steps (the submit `subsShiftingBsnl` is never in the allow-list)
+and prints only return codes, the `subsId`, the shifting flag and plan ids/names/prices.
+
 ## To apply later
 
 1. `git am` the five files on a branch of fnw-flow-apk.
