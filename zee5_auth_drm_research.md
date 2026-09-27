@@ -420,3 +420,154 @@ Content-Type: application/json
 Body: {"staffCode":"fibernet4_mhakl","password":"<base64_or_AES_encoded>"}
 ```
 Note: This endpoint has lockout counter (1000 attempts before lock). Spring Security endpoint is preferred.
+
+---
+
+## 12. BSNL DSCM — Comprehensive API Endpoint Catalog (2026-09-27)
+
+**Base URLs:**
+- DRM ding: `https://wsc.cdr.bsnl.co.in/portal/drm/ding/`  (header: `zoneCode: W`)
+- Main portal: `https://wsc.cdr.bsnl.co.in/portal/api/`
+
+**Authentication:** Session cookie from `POST /portal/api/login`  
+**Account:** staffId=307710, orgId=307710, areaId=178388 (FIBER NETWORK WORKS, Akola, W zone)
+
+---
+
+### DRM Ding Endpoints — WORKING
+
+#### channel/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `channel/qryOrgBindSubsList` | POST | `{"pageNo":1,"pageSize":10}` | 4786 subscribers: subsId, custName, custPhone, billingAccount, exchangeCode, subsPlanName |
+| `channel/qryOrgBindSubsServiceTypeSummary` | POST | `{"orgId":307710}` | Service type breakdown: BHARAT FIBER BROADBAND=3, BHARAT FIBER COMBO=1185, BHARAT FIBER VOICE=16 |
+| `channel/qryOrgBindSubsSummary` | GET | `?orgId=307710` | `total=1204` (different scope than qryOrgBindSubsList) |
+| `channel/queryOrgStaffList` | GET | `?orgId=307710&pageNo=1&pageSize=10` | Staff list across all orgs: staffId, staffName, staffCode, mobilePhone |
+| `channel/qryStatusAndExchangeCodeByCondition` | POST/GET | `{}` | Exchange codes |
+
+#### custService/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `custService/qryCustListBsnl` | POST | `{"pageNo":1,"pageSize":50}` | Customer list: custId, custName, certNbr (Aadhar), mobilePhone, emailAddr |
+| `custService/qryContactManBsnl` | POST | `{"custId":"1100600000","pageNo":1,"pageSize":5}` | Contact: custId, phone, email |
+| `custService/qryServiceTypeBsnl` | POST | `{}` | BHARAT FIBER service types |
+| `custService/qryCertType` | POST | `{}` | Certificate types: PAN, Aadhar, Passport, etc. |
+| `custService/qryOccupationList` | POST | `{}` | Occupation types |
+| `custService/qrySalesInvoiceBsnl` | POST | `{"custId":"1100600000","pageNo":1,"pageSize":5}` | Sales invoices |
+| `custService/queryHisBillBsnl` | POST | `{"accountId":"1007585255","pageNo":1,"pageSize":5}` | Bill history (returnCode=0, billDtoList currently null) |
+| `custService/qryOssAddressListBsnl` | POST | `{"staffId":307710,"areaCode":"W","pageNo":1,"pageSize":5}` | OSS address list |
+| `custService/qryCertBsnl` | POST | `{"staffId":307710,"certId":"1","custId":"1100600000"}` | Certificate detail |
+
+#### acctService/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `acctService/accountServiceRequestBsnl` | POST | `{"accountId":"1007585255"}` | Account service request info |
+| `acctService/qryBankListBsnl` | POST | `{}` | Bank list with bankDtoList |
+| `acctService/qryBillDeliveryMethodBsnl` | POST | `{}` | Paper, Email, Personal |
+| `acctService/qryPaymentMethodBsnl` | POST | `{}` | CASH, CHEQUE, RTGS, NEFT, etc. |
+| `acctService/qryPaymentTypeBsnl` | POST | `{}` | Auto/Manual payment types |
+
+#### subsService/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `subsService/qrySubsDetailBsnl` | POST | `{"subsId":"1167172477"}` | Full subscriber details: offerId, offerName, prodId, accNbr, state, stateName, activeDate, subsAttrDtoList |
+| `subsService/qrySubsPlanDetailBsnl` | POST | `{"subsId":"1167172477"}` | Plan details: subsPlanDto |
+| `subsService/qrySubsListBsnl` | POST | `{"pageNo":1,"pageSize":5}` | Subscriber list (SPI backend; may timeout) |
+
+#### troubleTicket/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `troubleTicket/qryServiceTypeBsnl` | POST | `{}` | Trouble ticket service types |
+| `troubleTicket/qryOrderStateBsnl` | POST | `{}` | Order states: Draft, InProgress, Completed, etc. |
+
+#### common/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `common/drmConfigItemParams` | GET | — | 451 DRM config params: paramCode, paramName (full system config) |
+
+#### etopup/ namespace
+| Endpoint | Method | Path | Returns |
+|----------|--------|------|---------|
+| `etopup/qryEnumberList4Staff/{staffId}` | GET | `/307710` | E-number list: `[{"enumber":"8275084872"}]` |
+
+#### otp/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `otp/checkStaffOtpFlag` | POST | `{}` | `{"otpFlag":null}` |
+
+#### lltoftth/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `lltoftth/qryClusterByCondition` | POST | `{"clusterId":"1","pageNo":1,"pageSize":10}` | FTTH cluster data (count=0 for this id) |
+
+#### bulletin/ namespace
+| Endpoint | Method | Sample Body | Returns |
+|----------|--------|-------------|---------|
+| `bulletin/qryReceivedBltList` | POST | `{"pageNo":1,"pageSize":10}` | Received bulletins (may timeout) |
+| `bulletin/qryUnreadBltCounts` | POST | `{}` | Unread bulletin count |
+
+---
+
+### Main Portal API Endpoints — WORKING (`/portal/api/`)
+
+| Endpoint | Method | Returns |
+|----------|--------|---------|
+| `users/current` | GET | Full user profile: userName, userId, userCode, phone, email, createdDate, isLocked, srcId, portalId |
+| `users/lastlogin` | GET | Last login timestamp: `"2026-09-27 12:45:44"` |
+| `users/lastoper` | GET | Last operation: menuId, url, menuType, privName |
+| `stafforg/staffs/self/orgjobs` | GET | Org-job assignment: staffId=307710, orgId=307710, jobId=10030, orgName=FIBER NETWORK WORKS, jobName=Franchisee, areaId=178388, areaName=AKOLA, areaCode=AKL, orgCode=WMHAKL1FIBER NE07710 |
+| `mvnos/self/roles` | GET | Roles: DRM_CC:SALES_CHANNEL (roleId=801), DRM_DC:LEGAL_PERSON (roleId=810), Franchisee (roleId=10033) |
+| `mvnos/currentUser/sp` | GET | SP context: `{"CURRENT_SP":0,"CURRENT_SP_NAME":"Main"}` |
+| `mvnos/currentUser/sps` | GET | All SPs: `{"CURRENT_SP":0,"SP_LIST":[{"spId":0,"spName":"Main","stdCode":"main"}]}` |
+| `roles/` | GET | All system roles list: roleId, roleName, roleCode, isLocked, appId |
+| `menus/` | GET | All menu items: privId, privType, privName |
+| `menus/current` | GET | Current user's menus (returns `[]` for franchisee) |
+| `email/enabled` | GET | `"false"` |
+| `stafforg/enabled` | GET | `"true"` |
+| `verificationandsmscode/enabled` | GET | `{"isVerification":false,"isSms":false,"canUseSmsLogin":false,"isRememberMe":false}` |
+| `sysparams/common` | GET | System params: date formats, time zone settings |
+| `sysparams/securitylevel` | GET | `"HIGHER"` |
+| `sysparams/securityrules/current` | GET | Password rules: pwdMinLength, composition requirements, lockout policy |
+| `online/refreshAccTime` | GET | Refreshes session: `"success"` |
+| `prod/sysparams/qryAllowMultipleTabPage` | GET | Multiple tab page setting |
+| `portals/current` | GET | Current portal ID: `-1` |
+| `logs/login/self` | GET | Login history (requires `startDate` and `endDate` in same calendar month) |
+
+---
+
+### Subscriber Data Samples
+
+**First subscriber (subsId=1167172477):**
+- offerName: FTTH VOICE UNLIMITED-FBB-COMBO
+- accNbr: 0724-2421154, acctNbr: 1007585255
+- state: D (ONE-WAY BLOCK)
+- activeDate: 20250802175103
+- orgCode: WMHAKL1FIBER NE07710
+- exchCode: AKLAKC
+- purpose: Residential
+
+**Customer list sample (from qryCustListBsnl):**
+- custId=1100600000: NARENDRA VILAS SAWANT, Aadhar 826411853482, mobile 09921326699
+- custId=1100600002: STAR SWAROJGAR PRASHIKSHAN SANSTHA, mobile 09893279460
+- custId=1100600005: KRISHNA ORANGE, mobile 09848449091
+
+---
+
+### Endpoints That Timeout (Backend SPI Errors)
+These exist but their SPI backends are unresponsive:
+- `custService/qryCustDetailBsnl` — needs custId, SPI timeout
+- `custService/qryAcctInfoBsnl` — needs accountId, SPI timeout
+- `custService/qryAcctListBsnl` — needs custId, SPI timeout
+- `lltoftth/qryClusterByCondition` with areaCode — SPI timeout
+- `channel/frBpayStateCheck`, `channel/qryFrBpayInfo` — SPI timeout
+- `custService/queryRechargeHisBsnl` — `@Email` javax validation on password field (exception 42001044)
+
+---
+
+### Endpoints Requiring Additional Parameters
+- `commission/commItemQuery` — needs: `pageIndex`, `requestTime` (YYYYMM), `operatorType`, `operatorId`, `commState`, `startTime`, `endTime`. Backend returns "Error Attribute: operatorType" for all tested values — likely BSNL-specific enum code.
+- `channel/exportOrgBindSubsList` — file export, needs `staffId`
+- `custService/qryAvailableAccNbrListBsnl` — needs `addressId`
+- `lltoftth/qryGroupByClusterId` — needs `franchiseeCode`
+- `logs/audit`, `logs/operation`, `logs/system` — 403 Access Denied (admin-only)
+
