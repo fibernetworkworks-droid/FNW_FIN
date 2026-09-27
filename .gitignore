@@ -1,3 +1,5 @@
 *.db
 *.pyc
 __pycache__/
+zee5_user_token.txt
+zee5_access_token.txt
