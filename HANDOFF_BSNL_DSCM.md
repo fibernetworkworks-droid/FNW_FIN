@@ -78,6 +78,87 @@ curl -s -X POST "https://wsc.cdr.bsnl.co.in/portal/drm/api/ding/<endpoint>" \
 
 ---
 
+## FTTH VOICE PASSWORD APIs — FULLY MAPPED ✅
+
+### Flow Overview
+FTTH Voice Password = WSC (Web Self Care) password. Same credential used for:
+- IVR voice services
+- Web Self Care portal login  
+- SIP/voice service credential on some BSNL FTTH implementations
+
+### Password Encryption (CONFIRMED FROM BUNDLE)
+AES-CBC with:
+- **Key**: `4EGJ6D9CFFA2GG9A` (16 bytes, UTF-8)
+- **IV**: `0102030405060708` (16 bytes, UTF-8)
+- **Mode**: CBC with PKCS7 padding
+- **Output**: Base64 string
+
+```python
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
+import base64
+
+def encrypt_password(password):
+    key = b'4EGJ6D9CFFA2GG9A'
+    iv  = b'0102030405060708'
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    ct = cipher.encrypt(pad(password.encode('utf-8'), AES.block_size))
+    return base64.b64encode(ct).decode('utf-8')
+```
+
+### Step 1 — Request OTP (to subscriber's mobile)
+```bash
+curl -s -X POST "https://wsc.cdr.bsnl.co.in/portal/drm/api/ding/subsService/sendWscPwdResetOtpBsnl" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: SESSION=...; userId=307710; orgId=307710; areaId=178388" \
+  -d '{"account":"<billingAcount_from_subscriber_record>"}' \
+  --cacert /root/.ccr/ca-bundle.crt
+```
+- **account field**: The `billingAcount` value from the subscriber record (e.g. `"1122351272"`)
+  - Source: `qryOrgBindSubsList` response → `billingAcount` field (note BSNL typo — missing 'c')
+  - Formats tried that FAILED: `"1100061001"`, `"1007585255"`, phone numbers in various formats
+  - Format NOT yet tried: the actual `billingAcount` from the subscriber's own record ← **TRY THIS NEXT**
+- Returns: `{returnCode:"0", returnMsg:"Success"}` → OTP sent to subscriber's mobile
+
+### Step 2 — Reset Password
+```bash
+curl -s -X POST "https://wsc.cdr.bsnl.co.in/portal/drm/api/ding/subsService/resetWscPwdBsnl" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: SESSION=...; userId=307710; orgId=307710; areaId=178388" \
+  -d '{
+    "account": "<billingAcount>",
+    "password": "<AES_encrypted_new_password>",
+    "otp": "<6-digit-OTP-from-SMS>"
+  }' \
+  --cacert /root/.ccr/ca-bundle.crt
+```
+
+### Known BHARAT FIBER VOICE Subscriber (for testing)
+```
+subsId:       1181705504
+mobilePhone:  0724-2992349  (BSNL landline)
+billingAcount: 1122351272   ← likely correct account format
+custPhone:    09175838309   (OTP will be sent here)
+custEmail:    mulchandanip504@gmail.com
+vkgStatus:    A (ACTIVE)
+orgId:        315070
+```
+⚠️ This subscriber is in orgId 315070 (sub-org). `qrySubsDetailBsnl` returns `42001044` for it.
+But it DOES appear in `qryOrgBindSubsList` under franchise 307710.
+
+### Alternative OTP Channel (CONFIRMED WORKING ✅)
+If `sendWscPwdResetOtpBsnl` fails, use `sendVerifyCodeByPhone` instead:
+```bash
+curl -s -X POST "https://wsc.cdr.bsnl.co.in/portal/drm/api/ding/sendVerifyCodeByPhone" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: SESSION=...; userId=307710; orgId=307710; areaId=178388" \
+  -d '{"phoneNumber":"9921326699"}' \
+  --cacert /root/.ccr/ca-bundle.crt
+# Returns: {returnCode:"0", securityCode:"XXXX", effDate:..., expDate:...}
+```
+
+---
+
 ## CURRENT BLOCKER — `0724-2459222` Lookup
 
 User asked to convert landline `0724-2459222` (Akola, Maharashtra) to FTTH with plan 299.
@@ -141,20 +222,48 @@ All endpoints discovered from this bundle's webpack chunks.
 
 ## NEXT STEPS TO WORK ON
 
-1. **Resolve the `0724-2459222` lookup** — get customer's mobile number or name to find `custId` → `subsId`
-2. **Run full shift flow end-to-end** once subsId is found:
+1. **Re-login** — SESSION expired. Get fresh SESSION cookie from DSCM app.
+2. **Test FTTH Voice Password Reset flow**:
+   - Try `sendWscPwdResetOtpBsnl` with `account:"1122351272"` (billingAcount of voice subscriber 1181705504)
+   - If success → OTP sent to 09175838309
+   - Then `resetWscPwdBsnl` with encrypted password
+3. **Resolve the `0724-2459222` lookup** — get customer's mobile number or name to find `custId` → `subsId`
+4. **Run full shift flow end-to-end** once subsId is found:
    - `subsShiftingCheckBsnl` → confirm `shiftingFlag:"Y"`
    - `qryOfferForShifting` → find plan with "299" in name/price
    - `subsShiftingBsnl` → submit order
-3. **Build Python/shell automation script** for the complete flow
-4. **Re-login if SESSION expires** — use the DSCM mobile app login (no captcha, direct mobile API)
+5. **Build Python/shell automation script** for the complete flow
+
+### Quick Password Encryption Test
+```python
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
+import base64
+
+def bsnl_encrypt(pwd):
+    c = AES.new(b'4EGJ6D9CFFA2GG9A', AES.MODE_CBC, b'0102030405060708')
+    return base64.b64encode(c.encrypt(pad(pwd.encode(), 16))).decode()
+
+print(bsnl_encrypt('NewPass@123'))  # Use this encrypted value in resetWscPwdBsnl
+```
 
 ---
 
-## GIT STATUS
+## SESSION STATUS
+
+### SESSION EXPIRED
+The SESSION `b3fe85c4-00a1-4d06-95e8-f279b52d872d` is **expired** (returns `7070001` on all API calls).
+
+**Re-login Steps:**
+1. Open BSNL DSCM app (`com.bsnl.dscm`)
+2. Login with your franchisee credentials
+3. Intercept the SESSION cookie (use Charles Proxy / MITM on Android)
+4. Update the SESSION value in the curl templates
+
+### GIT STATUS
 
 - Branch: `claude/apk-review-ribhgj`
-- **15 commits unpushed** — BLOCKED: Claude GitHub App not installed on `fibernetworkworks-droid`
+- **18+ commits unpushed** — BLOCKED: Claude GitHub App not installed on `fibernetworkworks-droid`
 - Admin must install at: https://github.com/apps/claude/installations/select_target
 - Once installed, run: `git push -u origin claude/apk-review-ribhgj`
 
