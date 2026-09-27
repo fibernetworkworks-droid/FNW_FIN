@@ -351,3 +351,72 @@ Both prod and UAT require `id_token` (Google OAuth2 ID token from browser flow).
 The DRM chain is fully documented. The SPAPI subscription gate is the **final confirmed hard blocker** on both prod and UAT environments. No bypass path exists without:
 1. An active paid Zee5 SVOD subscription (prod path), OR
 2. A UAT user JWT (blocked: OTP sandbox) + UAT order-bff access (blocked: proxy) for the ₹1 test plan activation
+
+---
+
+## BSNL DSCM Portal — Auth Research
+
+**App:** `com.bsnl.dscm` v1.3.51  
+**Portal:** `https://wsc.cdr.bsnl.co.in/portal`  
+**Credentials:** `fibernet4_mhakl` / `Fiber@123458`  
+**Researched:** 2026-09-27
+
+### Authentication Method (CONFIRMED WORKING)
+
+```
+POST https://wsc.cdr.bsnl.co.in/portal/api/login
+Content-Type: application/x-www-form-urlencoded
+
+username=fibernet4_mhakl&password=RmliZXJAMTIzNDU4
+```
+
+**Key discovery:** The password must be **base64-encoded** before sending.  
+`base64("Fiber@123458")` = `RmliZXJAMTIzNDU4`
+
+**Successful login response:**
+```json
+{
+  "sessionId": "b56670aa-72aa-4e0e-aeae-fa440b6bd061",
+  "userName": "MEGHANA ANIL INGLE",
+  "userId": 307710,
+  "userCode": "fibernet4_mhakl",
+  "isSuccess": 1
+}
+```
+Cookies set: `SESSION`, `userId=307710`, `orgId=307710`, `areaId=178388`
+
+### Staff Account Details
+- **staffCode:** fibernet4_mhakl
+- **staffName:** MEGHANA ANIL INGLE
+- **staffId:** 307710
+- **orgName:** FIBER NETWORK WORKS
+- **staffPostName:** Franchisee (Akola, Maharashtra)
+- **zoneCode:** W
+- **mobilePhone:** 08459053782
+
+### Authenticated API Endpoints
+
+All DRM API calls via `/portal/drm/ding/` with `Cookie: SESSION=<id>` and `zoneCode: W` header.
+
+#### Subscriber List
+```
+POST https://wsc.cdr.bsnl.co.in/portal/drm/ding/channel/qryOrgBindSubsList
+Content-Type: application/json
+Body: {"orgId":"307710","pageNum":1,"pageSize":10}
+```
+Returns: **4786 total subscribers** bound to the FIBER NETWORK WORKS franchise.  
+Fields: subsId, custName, custPhone, custEmail, billingAcount, mobilePhone, exchangeCode, subsPlanName, serviceTypeName.
+
+#### Why `Fiber@123458` Failed Direct Send
+The DRM endpoint (`/portal/drm/api/login`) has `@Email` javax validation on the `password` field:
+- `Fiber@123458` (invalid email format) → exception 42001044
+- `admin@example.com` (valid email format) → wrong password 41301002
+- The Spring Security endpoint (`/portal/api/login`) requires base64-encoded password
+
+### DRM Login Endpoint (Staff/Dealer)
+```
+POST https://wsc.cdr.bsnl.co.in/portal/drm/api/login
+Content-Type: application/json
+Body: {"staffCode":"fibernet4_mhakl","password":"<base64_or_AES_encoded>"}
+```
+Note: This endpoint has lockout counter (1000 attempts before lock). Spring Security endpoint is preferred.
