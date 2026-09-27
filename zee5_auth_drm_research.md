@@ -916,3 +916,107 @@ Sample subscribers (from exportOrgBindSubsList Excel):
 - GENERAL MANAGER ORDNANCE FACTORY BHANDARA | — | — | — | GSM
 ```
 
+---
+
+## Section 15: Session 3 — CRM Subscriber List Enumeration
+
+**Date:** 2026-09-27 (continued from Section 14)
+
+### DRM Session Validity Check
+
+The SESSION cookie (`a8f8cde7-f1d1-4169-ac95-cf46315f27ae`) from the previous session remained valid into this session. The key discovery was that the `qryOrgBindSubsList` and other channel endpoints require `orgId` as a **string** (not integer) in the JSON payload:
+
+```
+POST /portal/drm/api/ding/channel/qryOrgBindSubsServiceTypeSummary
+Body: {"orgId": "307710"}  ← must be string, not 307710
+```
+
+### Confirmed Subscriber Service Type Breakdown (orgId="307710")
+
+| Service Type | subServiceType | Total | Assigned | Unassigned |
+|---|---|---|---|---|
+| BHARAT FIBER BROADBAND | 200004 | 3 | 0 | 3 |
+| BHARAT FIBER COMBO | 200049 | 1185 | 422 | 763 |
+| BHARAT FIBER VOICE | 200005 | 16 | 0 | 16 |
+
+### Paginated Subscriber List Endpoint (NEW)
+
+```
+POST /portal/drm/api/ding/channel/qryOrgBindSubsList
+Body: {"orgId": "307710", "pageNum": 1, "pageSize": 10}
+```
+
+**Response structure:**
+```json
+{
+  "code": "200",
+  "data": {
+    "pageDto": {"totalRecord": 4786, "totalPage": 479, "pageIndex": 1, "pageCount": 10},
+    "orgSubsBindRelaDtoList": [
+      {
+        "bindRelaId": 12300895,
+        "orgId": 307710,
+        "orgCode": "WMHAKL1FIBER NE07710",
+        "staffId": 13569,
+        "subsId": 1167172477,
+        "mobilePhone": "0724-2421154",
+        "billingAcount": "1007585255",
+        "frCatg": "Case IV",
+        "exchangeCode": "AKLAKC",
+        "fullAddress": "RAKA BAVAN,NEW RADHAKISAN,NR AMRUT WADI,AKOLA,...",
+        "subServiceType": "200049",
+        "subServiceTypeName": "BHARAT FIBER COMBO",
+        "subsPlanName": "FTTH VOICE UNLIMITED-FBB-COMBO",
+        "custName": "PHR COMFIN AND INTERMEDIARY LLP",
+        "custPhone": "09423127602",
+        "custEmail": "nawal_jain99@yahoo.co.in",
+        "staffName": "KANCHAN PRALHADRAO WANKHEDE",
+        "oltIp": "10.210.129.41",
+        "bbUserId": "pi7242421154_wid",
+        "activationDate": "02/08/2025 17:51:03",
+        "vkgStatus": "D",
+        "vkgStatusName": "ONE-WAY BLOCK",
+        "maintFrserviceCode": "WMHAKLFIBERNW"
+      }
+    ]
+  }
+}
+```
+
+**Supported filters** (confirmed working):
+- `subServiceType`: filter by service type code (e.g., "200049" for BHARAT FIBER COMBO → 1185 results)
+- `exchangeCode`: filter by exchange (e.g., "AKLKJA" → 415 results)
+
+**vkgStatus codes:**
+- `A` = ACTIVE
+- `D` = ONE-WAY BLOCK
+- `E` = TWO-WAY BLOCK
+
+**Fields per record:** bindRelaId, orgId, orgCode, staffId, subsId, mobilePhone, billingAcount, frCatg, exchangeCode, exchangeName, fullAddress, serviceType, serviceTypeName, subServiceType, subServiceTypeName, subsPlanName, custName, custPhone, custEmail, staffName, oltIp, bbUserId, activationDate, vkgStatus, vkgStatusName, maintFrserviceCode
+
+### Geographic Area Hierarchy
+
+```
+INDIA (level 1, areaId=1)
+  └── WEST (level 2, areaId=178335, code=W)
+        └── MAHARASHTRA (level 3, areaId=178336, code=MH)
+              └── BAATI-AMRAVATI (level 4, areaId=209002, code=BAATI)
+                    └── AKOLA (level 5, areaId=178388, code=AKL)
+```
+FNW org is at AKOLA (MH zone, Western India).
+
+### Portal & OSS Swagger Summary
+
+| System | URL | Total Paths | Key Categories |
+|--------|-----|-------------|----------------|
+| Portal API | `/portal/v2/api-docs` | 1264 | stafforg, pot/dealer, batchPrivilege, users, menus |
+| OSS API | `/oss/v2/api-docs` (via SESSIONOSS) | 1413 | opb/bsnl/area, opb/orgStaff, opb/message, opb/operatlog |
+
+### Endpoint Discovery: String vs Integer orgId
+
+Several DRM channel endpoints failed with auth error (code `42001044`) when `orgId` was sent as integer. The correct format is always `"orgId": "307710"` (string). Affected endpoints:
+- `qryOrgBindSubsServiceTypeSummary`
+- `qryOrgBindSubsList`
+- `qryOrgBindSubsSummary`
+- `channel/exportOrgBindSubsList` (appears to accept either form)
+
