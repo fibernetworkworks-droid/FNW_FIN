@@ -227,3 +227,28 @@ Checks if an email/mobile has a verified Zee5 account. Returns 403 "Please provi
 | `SocialOtplessRegistrationRequestDto` | Requires OTP-less SDK (browser OAuth flow) |
 | GET singlePlayback | All GETs return "Bad Request ERROR : Invalid Url." |
 | `v1/guest` with guest_hex | Token type not recognized |
+| Registered user JWT for singlePlayback | "Token not found" — no subscription record |
+| `v1/user/renew` with hex refresh_token | 401 "Please login Again" — session store issue |
+| `guestUserLogin` | "Authorization failed" — requires telco-specific JWT |
+| `profileapi.zee5.com` | 502 — proxy-blocked host |
+| `wwwapi.zee5.com` | 502 — proxy-blocked host |
+| `www.zee5.com` | 403 — Akamai WAF IP block |
+
+---
+
+## 9. SPAPI "Token not found" — Root Cause Analysis
+
+**Tested:** platform token (HS256), guest JWT (RS256), registered user JWT (RS256), hex refresh token, all content IDs (premium + AVOD), all countries, all ESK variants, all header combinations.
+
+**Conclusion:** `singlePlayback/v2/getDetails/secure` performs a server-side lookup of the token identity against SPAPI's internal subscription database. The "Token not found" response is returned when:
+- No active subscription record exists for the user
+- OR the session has not been server-side registered by Zee5's login backend
+
+**Hard gate:** An active paid Zee5 subscription (SVOD) is required for SPAPI to return `encryptedDRMToken`. Free accounts (including OTP-registered accounts without a plan) are rejected.
+
+**Untested paths (require additional access):**
+- B2B telco silent registration via `b2bapi.zee5.com/partner/api/silentregister.php` (Akamai IP-blocked)
+- Google OAuth registration — would still be a free account without subscription
+- TrueCaller registration — same
+
+**DRM chain is fully documented; the subscription gate is the final blocker.**
