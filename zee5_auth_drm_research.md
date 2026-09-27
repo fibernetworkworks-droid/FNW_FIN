@@ -233,12 +233,23 @@ Checks if an email/mobile has a verified Zee5 account. Returns 403 "Please provi
 | `profileapi.zee5.com` | 502 — proxy-blocked host |
 | `wwwapi.zee5.com` | 502 — proxy-blocked host |
 | `www.zee5.com` | 403 — Akamai WAF IP block |
+| `displayAds/v3` with all token types | 401 "AUTHENTICATION_ERROR: Token not found" — same subscription gate |
+| `displayAds/v1`, `v2`, `v4` | 404 — only v3 exists |
+| `singlePlayback/v1,v3/getDetails/secure` | 200 "Bad Request ERROR : Invalid Url." — only v2 exists |
+| `singlePlayback/v2/getDetails` (non-secure) | 200 "Bad Request ERROR : Invalid Url." |
+| Bearer auth on SPAPI | Same "Token not found" — auth bypass only works on subscriptionapi |
+| `order-bff.zee5.com` | 502 — proxy-blocked |
+| `securepayment-qa.zee5.dev` | 403 — Cloudflare WAF IP block |
+| UAT subscription activate (no JWT) | 401 — requires user JWT |
+| UAT SPAPI with prod JWT | 401 "Token not found" — separate session stores |
+| Mobile `sendotp` with `mobile` field | 400 "Mandatory fields missing" — field name must be `phoneno` |
+| `device/sendotp_v1.php` | 404 on user.zee5.com; 403 on b2bapi.zee5.com |
 
 ---
 
 ## 9. SPAPI "Token not found" — Root Cause Analysis
 
-**Tested:** platform token (HS256), guest JWT (RS256), registered user JWT (RS256), hex refresh token, all content IDs (premium + AVOD), all countries, all ESK variants, all header combinations.
+**Tested:** platform token (HS256), guest JWT (RS256), registered user JWT (RS256), hex refresh token, all content IDs (premium + AVOD), all countries, all ESK variants, all header combinations, all platform_name values (`android_app`, `android_tv`, `firetv`, `web`), Bearer + x-access-token combined, `contentbitrates.zee5.com` alternate host, `displayAds/v3` endpoint, `x-z5-guest-token` header.
 
 **Conclusion:** `singlePlayback/v2/getDetails/secure` performs a server-side lookup of the token identity against SPAPI's internal subscription database. The "Token not found" response is returned when:
 - No active subscription record exists for the user
@@ -250,5 +261,59 @@ Checks if an email/mobile has a verified Zee5 account. Returns 403 "Please provi
 - B2B telco silent registration via `b2bapi.zee5.com/partner/api/silentregister.php` (Akamai IP-blocked)
 - Google OAuth registration — would still be a free account without subscription
 - TrueCaller registration — same
+- UAT JWT against UAT SPAPI — UAT SMS OTP delivery unreliable; if UAT bypasses subscription check, test plan `0-11-7090` (₹1, Juspay) could be activated
 
 **DRM chain is fully documented; the subscription gate is the final blocker.**
+
+---
+
+## 10. Extended Findings (2026-09-27)
+
+### Mobile OTP Auth
+The `sendotp` endpoint requires field name **`phoneno`** (not `mobile`) for SMS OTP:
+```
+POST https://user.zee5.com/v1/user/sendotp
+Body: {"phoneno": "+918459053782"}   ← field name is phoneno, needs +91 prefix
+Response: {"code":0,"message":"SMS successfully sent"}
+```
+Same applies to UAT (`user-uat-gcp.zee5.com`). Mobile OTP registration also uses `phoneno`:
+```
+POST /v1/user/registerWithOTPMobileorEmail
+Body: {"phoneno": "+91XXXXXXXXXX", "otp": "<4-digit>"}
+```
+
+### UAT Environment Map (fully verified)
+| Host | Status | Notes |
+|------|--------|-------|
+| `launch-uat-gcp.zee5.com` | Active | UAT platform token (`HOBNPuy7H3T5meJJAfyLkJlHaX2dXeEB` does NOT work; use prod PT structure but UAT ESK) |
+| `user-uat-gcp.zee5.com` | Active | Auth/registration; ESK key: `Cnj2TWmPK3RxgUqd4pJY1gmgKQWnVRA8` |
+| `spapi-uat-gcp.zee5.com` | Active | Returns 200 "SPAPI is up and running!"; same "Token not found" for prod JWT |
+| `subscriptionapi-uat-gcp.zee5.com` | Active | `/v1/subscriptionplan` returns 15 plans with UAT PT |
+| `gwapi-uat-gcp.zee5.com` | Active | 404 for all playback paths tried |
+| `useraction-uat-gcp.zee5.com` | 503 | No healthy upstream |
+| `b2bapi-uat-gcp.zee5.com` | 503 | No healthy upstream |
+
+### UAT Subscription Plans (15 plans, all SVOD, no free tier)
+Key plans:
+- `0-11-7090` — "Renewal Test Plan" ₹1/year, Juspay payment_provider `product_reference: 926`
+- `0-11-6957` — "Renewal Test Plan" ₹10/year (price expired 2026-09-07)
+- `0-11-3236` — "Premium 4K" ₹1299/year
+- `0-11-4136` — "Premium 4K" ₹299/month
+
+### subscriptionapi.zee5.com Endpoint Map
+| Path | Method | Notes |
+|------|--------|-------|
+| `GET /v1/subscription` | GET | Returns `[]` for unsubscribed user (Bearer auth) |
+| `GET /v1/subscriptionplan?code=android_app&country=IN` | GET | 500 "JSONObject[code] not found" on prod; works on UAT |
+| `POST /v1/subscription/{planId}` | POST | 400 "Please input the required path variable" — route not matching |
+| `GET /v2/plans?platform_code=...` | GET | 400 "Invalid platform-code" — unknown platform code format |
+
+### Payment Infrastructure
+- `order-bff` host (blocked): handles `POST order-bff/v1/subscription/{subscriptionPlanID}` and `order-bff/v1/subscription/{subscriptionPlanID}/payments`
+- `securepayment-qa.zee5.dev` (IP-blocked): QA payment server hosting `/paymentGateway/juspay/*`
+- Payment providers: Juspay (primary), Adyen (international), Google Play Billing
+- Juspay sandbox mode available in UAT; requires order-bff to initiate
+
+### Rate Limits Observed
+- `sendotp` (prod mobile): 5 attempts per 300 seconds per phone number
+- OTP TTL: ~120 seconds (consistently expired before use in this session)
