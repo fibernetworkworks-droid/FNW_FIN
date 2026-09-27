@@ -1,0 +1,69 @@
+From 2dd89ae64941ae8dda66ce891dfd3d7f7ab0dd13 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 16:02:32 +0000
+Subject: [PATCH 3/5] patch 03: document Quick vs Guided OTT verify at the API
+ and ViewModel
+
+---
+ .../java/com/fnw/flow/operator/data/api/FNWFlowApi.kt  |  5 +++++
+ .../ui/screens/tools/ftth/FtthConversionViewModel.kt   | 10 ++++++++--
+ 2 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/app/src/main/java/com/fnw/flow/operator/data/api/FNWFlowApi.kt b/app/src/main/java/com/fnw/flow/operator/data/api/FNWFlowApi.kt
+index 042949d..13f4b0f 100644
+--- a/app/src/main/java/com/fnw/flow/operator/data/api/FNWFlowApi.kt
++++ b/app/src/main/java/com/fnw/flow/operator/data/api/FNWFlowApi.kt
+@@ -475,6 +475,8 @@ interface FNWFlowApi {
+     @POST("api/ftth/convert/ott")
+     suspend fun v1OttSend(@Body body: V1OttSendRequest): Response<V1OttSendResponse>
+ 
++    /** Quick OTT: verifies the OTP at BSNL AND places the order, in this one call. There is no
++     *  separate submit after it, and a failure here may already be past the point of no return. */
+     @POST("api/ftth/convert/ott/verify")
+     suspend fun v1OttVerify(@Body body: V1OttVerifyRequest): Response<V1ConvertResponse>
+ 
+@@ -491,6 +493,8 @@ interface FNWFlowApi {
+     @POST("api/ftth/v3/otp/send")
+     suspend fun v3OtpSend(@Body body: V3OtpSendRequest): V3OtpSendResponse
+ 
++    /** Guided OTT: format check + stash only, nothing reaches BSNL. The real OTP verify runs inside
++     *  /v3/submit together with the order, so unlike [v1OttVerify] this can be retried freely. */
+     @POST("api/ftth/v3/otp/verify")
+     suspend fun v3OtpVerify(@Body body: V3OtpVerifyRequest): V3OtpVerifyResponse
+ 
+@@ -499,6 +503,7 @@ interface FNWFlowApi {
+     @POST("api/ftth/convert/start")
+     suspend fun v1ConvertStart(@Body body: V1ConvertRequest): Response<com.fnw.flow.operator.data.api.dto.FtthJobStartResponse>
+ 
++    /** [v1OttVerify] as a background job: the same verify-and-place, polled via ftthJobQuick. */
+     @POST("api/ftth/convert/ott/verify/start")
+     suspend fun v1OttVerifyStart(@Body body: V1OttVerifyRequest): Response<com.fnw.flow.operator.data.api.dto.FtthJobStartResponse>
+ 
+diff --git a/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt b/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
+index 1ba20ff..790577e 100644
+--- a/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
++++ b/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
+@@ -562,7 +562,10 @@ class FtthConversionViewModel @Inject constructor(
+         _state.update { it.copy(guidedOtpCode = cleaned, guidedOtpVerifyError = null) }
+     }
+ 
+-    /** OTP step: lightweight format-check + stash. Real BSNL verify runs at submit. */
++    /**
++     * OTP step: lightweight format-check + stash. Real BSNL verify runs at submit.
++     * Unlike Quick's [quickVerifyAndConvert] this places nothing, so retrying it is safe.
++     */
+     fun guidedVerifyOtp() {
+         val s = _state.value
+         val sessionId = s.guidedLookup?.sessionId ?: return
+@@ -905,7 +908,10 @@ class FtthConversionViewModel @Inject constructor(
+             !s.quickSubmitPonr                           // BSNL may already have it: check first
+     }
+ 
+-    /** Verifies the OTP and finalizes the conversion — produces a V1ConvertResponse on success. */
++    /**
++     * Verifies the OTP and finalizes the conversion — produces a V1ConvertResponse on success.
++     * Unlike Guided's [guidedVerifyOtp] this places the order: there is no separate submit step.
++     */
+     fun quickVerifyAndConvert() {
+         val s = _state.value
+         val resumeKey = s.quickOttSent?.resumeKey ?: return

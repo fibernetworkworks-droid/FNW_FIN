@@ -1,0 +1,104 @@
+From b61c5801dc6275b266173660119e8cafe06b13e3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 16:02:31 +0000
+Subject: [PATCH 2/5] patch 02: move normalizeLandline to util/LandlineNumber,
+ fix the 091 prefix
+
+Behaviour kept except one fix: a 13-digit 091-prefixed number normalized to 12 digits (917242459222) instead of 07242459222. Callers only test for null, so nothing visible changes. The stale 'same regex as v1Convert validator' comment is removed: no regex is used, and the backend copy the spec expected is not in this repo.
+---
+ .../tools/ftth/FtthConversionViewModel.kt     | 15 ++---------
+ .../fnw/flow/operator/util/LandlineNumber.kt  | 19 ++++++++++++++
+ .../flow/operator/util/LandlineNumberTest.kt  | 25 +++++++++++++++++++
+ 3 files changed, 46 insertions(+), 13 deletions(-)
+ create mode 100644 app/src/main/java/com/fnw/flow/operator/util/LandlineNumber.kt
+ create mode 100644 app/src/test/java/com/fnw/flow/operator/util/LandlineNumberTest.kt
+
+diff --git a/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt b/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
+index 63b5e05..1ba20ff 100644
+--- a/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
++++ b/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
+@@ -16,6 +16,7 @@ import com.fnw.flow.operator.data.local.ToolIds
+ import com.fnw.flow.operator.data.local.ToolRunRecord
+ import com.fnw.flow.operator.data.repository.FtthConversionRepository
+ import com.fnw.flow.operator.ui.common.toMessage
++import com.fnw.flow.operator.util.LandlineNumber
+ import dagger.hilt.android.lifecycle.HiltViewModel
+ import dagger.hilt.android.qualifiers.ApplicationContext
+ import kotlinx.coroutines.flow.MutableSharedFlow
+@@ -970,19 +971,7 @@ class FtthConversionViewModel @Inject constructor(
+     }
+ 
+     companion object {
+-        // Same regex as v1Convert validator: 3-4 digit STD + 6-8 digit number, optional dash
+-        /**
+- * Normalize Indian landline numbers to canonical "0XXXXXXXXXX" form.
+- * Accepts all Indian formats - 2-5 digit STD codes, optional dashes/spaces/+91.
+- */
+-private fun normalizeLandline(input: String): String? {
+-    val digits = input.filter { it.isDigit() }
+-    return when {
+-        digits.length == 10 -> "0$digits"
+-        digits.length == 11 && digits.startsWith("0") -> digits
+-        digits.length == 12 && digits.startsWith("91") -> "0" + digits.substring(2)
+-        digits.length == 13 && digits.startsWith("091") -> digits.substring(1)
+-        else -> null
++        private fun normalizeLandline(input: String): String? = LandlineNumber.normalize(input)
+     }
+ }
+     }
+diff --git a/app/src/main/java/com/fnw/flow/operator/util/LandlineNumber.kt b/app/src/main/java/com/fnw/flow/operator/util/LandlineNumber.kt
+new file mode 100644
+index 0000000..0e4aa5a
+--- /dev/null
++++ b/app/src/main/java/com/fnw/flow/operator/util/LandlineNumber.kt
+@@ -0,0 +1,19 @@
++package com.fnw.flow.operator.util
++
++/** Indian landline numbers as the FTTH conversion screens take them. */
++object LandlineNumber {
++    /**
++     * The canonical "0XXXXXXXXXX" form, or null when [input] is not a landline.
++     * Accepts all Indian formats - 2-5 digit STD codes, optional dashes/spaces/+91.
++     */
++    fun normalize(input: String): String? {
++        val digits = input.filter { it.isDigit() }
++        return when {
++            digits.length == 10 -> "0$digits"
++            digits.length == 11 && digits.startsWith("0") -> digits
++            digits.length == 12 && digits.startsWith("91") -> "0" + digits.substring(2)
++            digits.length == 13 && digits.startsWith("091") -> "0" + digits.substring(3)
++            else -> null
++        }
++    }
++}
+diff --git a/app/src/test/java/com/fnw/flow/operator/util/LandlineNumberTest.kt b/app/src/test/java/com/fnw/flow/operator/util/LandlineNumberTest.kt
+new file mode 100644
+index 0000000..438f83a
+--- /dev/null
++++ b/app/src/test/java/com/fnw/flow/operator/util/LandlineNumberTest.kt
+@@ -0,0 +1,25 @@
++package com.fnw.flow.operator.util
++
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertNull
++import org.junit.Test
++
++class LandlineNumberTest {
++
++    @Test fun acceptsTheWaysOperatorsTypeANumber() {
++        for (typed in listOf(
++            "07242459222", "0724-2459222", "0724 245 9222", "7242459222",
++            "+91 724 2459222", "917242459222", "091-724-2459222",
++        )) assertEquals(typed, "07242459222", LandlineNumber.normalize(typed))
++    }
++
++    @Test fun keepsShortAndLongStdCodes() {
++        assertEquals("02224567890", LandlineNumber.normalize("022-24567890"))
++        assertEquals("07172234567", LandlineNumber.normalize("07172-234567"))
++    }
++
++    @Test fun rejectsWhatIsNotALandline() {
++        for (typed in listOf("", "12345", "724245922", "17242459222", "0724245922299", "927242459222"))
++            assertNull(typed, LandlineNumber.normalize(typed))
++    }
++}

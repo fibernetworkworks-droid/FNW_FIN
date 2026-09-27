@@ -1,0 +1,103 @@
+From 28506e7a4e0c611eed7bc02ac2b7aa12d7dc685a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 16:02:31 +0000
+Subject: [PATCH 1/5] patch 01: FtthJob Moshi generic test
+
+---
+ .../api/dto/FtthJobDeserializationTest.kt     | 87 +++++++++++++++++++
+ 1 file changed, 87 insertions(+)
+ create mode 100644 app/src/test/java/com/fnw/flow/operator/data/api/dto/FtthJobDeserializationTest.kt
+
+diff --git a/app/src/test/java/com/fnw/flow/operator/data/api/dto/FtthJobDeserializationTest.kt b/app/src/test/java/com/fnw/flow/operator/data/api/dto/FtthJobDeserializationTest.kt
+new file mode 100644
+index 0000000..d50939e
+--- /dev/null
++++ b/app/src/test/java/com/fnw/flow/operator/data/api/dto/FtthJobDeserializationTest.kt
+@@ -0,0 +1,87 @@
++package com.fnw.flow.operator.data.api.dto
++
++import com.fnw.flow.operator.di.NetworkModule
++import com.squareup.moshi.JsonAdapter
++import com.squareup.moshi.Types
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNotNull
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++/**
++ * GET /api/ftth/job/{jobId} is one route read as two types: [FtthJobResponse] of
++ * [V1ConvertResponse] (Quick) and of [V3SubmitResponse] (Guided). If the app's Moshi ever
++ * stopped materializing `T`, a finished order would come back without its `result`, and
++ * FtthConversionRepository.pollJob() reports a "done" job with no result as LOST_TRACK:
++ * the operator is told the app lost track of an order that went through.
++ *
++ * Reads with the same Moshi the app's Retrofit uses (NetworkModule), so a change to that
++ * wiring is caught here. Payloads are what automation/ftth-jobs.js sends.
++ */
++class FtthJobDeserializationTest {
++
++    private val moshi = NetworkModule.provideMoshi()
++
++    private inline fun <reified T> jobAdapter(): JsonAdapter<FtthJobResponse<T>> =
++        moshi.adapter(Types.newParameterizedType(FtthJobResponse::class.java, T::class.java))
++
++    @Test fun quickDoneJobCarriesTheOrder() {
++        val json = """
++            {"ok":true,"job":{"jobId":"j1","kind":"quick","landline":"07172234567","state":"done",
++              "startedAt":1758960000000,"finishedAt":1758960042000,"error":null,"message":null,
++              "ponr":false,"custOrderId":null,"canRetry":true,
++              "result":{"status":"COMPLETED","orderNumber":"ORD-JOB-1","customerName":"RAMESH PATIL",
++                "mobileNumber":"9876543210","customerAddress":"12-B Main Road","landlineNumber":"07172234567",
++                "bbUserId":"bb07172234567","plan":"FIBRE BASIC","planPrice":499,"type":"COMBO","ponr":true}}}
++        """.trimIndent()
++
++        val job = jobAdapter<V1ConvertResponse>().fromJson(json)!!.job!!
++        assertEquals("done", job.state)
++        // Typed reads: a null result or one left as a Map (T not materialized) both fail here.
++        val order = job.result
++        assertNotNull("done job must keep its V1ConvertResponse", order)
++        assertEquals("ORD-JOB-1", order!!.orderNumber)
++        assertEquals("bb07172234567", order.bbUserId)
++        assertEquals(499, order.planPrice)
++        assertTrue(order.ponr)
++    }
++
++    @Test fun guidedDoneJobCarriesTheOrder() {
++        val json = """
++            {"ok":true,"job":{"jobId":"j2","kind":"guided","landline":"07172234567","state":"done",
++              "startedAt":1758960000000,"finishedAt":1758960042000,"error":null,"message":null,
++              "ponr":false,"custOrderId":null,"canRetry":true,
++              "result":{"status":"COMPLETED","success":true,"sessionId":"S-1","orderNumber":"ORD-JOB-2",
++                "bbUserId":"bb07172234567","custOrderId":"CO-77","type":"COMBO","customerName":"RAMESH PATIL",
++                "landlineNumber":"07172234567","plan":"FIBRE BASIC","planPrice":499}}}
++        """.trimIndent()
++
++        val job = jobAdapter<V3SubmitResponse>().fromJson(json)!!.job!!
++        assertEquals("done", job.state)
++        val order = job.result
++        assertNotNull("done job must keep its V3SubmitResponse", order)
++        assertEquals("COMPLETED", order!!.status)
++        assertTrue(order.success)
++        assertEquals("ORD-JOB-2", order.orderNumber)
++        assertEquals("CO-77", order.custOrderId)
++    }
++
++    @Test fun failedJobHasNoResultAndKeepsItsError() {
++        val json = """
++            {"ok":true,"job":{"jobId":"j3","kind":"quick","landline":"07172234567","state":"failed",
++              "startedAt":1758960000000,"finishedAt":1758960042000,"result":null,"error":"BSNL timeout",
++              "message":null,"ponr":true,"custOrderId":"CO-78","canRetry":false}}
++        """.trimIndent()
++
++        val job = jobAdapter<V1ConvertResponse>().fromJson(json)!!.job!!
++        assertEquals("failed", job.state)
++        // No result is right for a failed job; pollJob() takes the error branch, not LOST_TRACK.
++        assertNull(job.result)
++        assertEquals("BSNL timeout", job.error)
++        assertTrue(job.ponr)
++        assertEquals("CO-78", job.custOrderId)
++        assertFalse(job.canRetry)
++    }
++}

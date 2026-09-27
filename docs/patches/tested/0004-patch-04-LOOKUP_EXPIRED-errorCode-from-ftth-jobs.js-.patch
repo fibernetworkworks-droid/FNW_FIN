@@ -1,0 +1,171 @@
+From 994518e7d971aa32ab63689f9159ec8bd7fefcbd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 16:02:32 +0000
+Subject: [PATCH 4/5] patch 04: LOOKUP_EXPIRED errorCode from ftth-jobs.js; app
+ matches the code, prose kept as fallback
+
+---
+ .../flow/operator/data/api/dto/FtthV3Dtos.kt  |  2 ++
+ .../repository/FtthConversionRepository.kt    | 12 ++++++++++-
+ .../tools/ftth/FtthConversionViewModel.kt     |  5 ++---
+ .../tools/ftth/FtthConversionEndToEndTest.kt  | 21 ++++++++++++++++++-
+ tools/ftth-robust-test.mjs                    |  1 +
+ tools/ftth/ftth-jobs.js                       |  3 ++-
+ 6 files changed, 38 insertions(+), 6 deletions(-)
+
+diff --git a/app/src/main/java/com/fnw/flow/operator/data/api/dto/FtthV3Dtos.kt b/app/src/main/java/com/fnw/flow/operator/data/api/dto/FtthV3Dtos.kt
+index e0396df..f06c13c 100644
+--- a/app/src/main/java/com/fnw/flow/operator/data/api/dto/FtthV3Dtos.kt
++++ b/app/src/main/java/com/fnw/flow/operator/data/api/dto/FtthV3Dtos.kt
+@@ -307,6 +307,8 @@ data class V1ConvertResponse(
+     val ponr: Boolean = false,
+     val custOrderId: String? = null,
+     val error: String? = null,
++    /** Machine-readable failure, e.g. "LOOKUP_EXPIRED"; absent from older servers. */
++    val errorCode: String? = null,
+ )
+ 
+ // ╔══════════════════════════════════════════════════════════════════════════╗
+diff --git a/app/src/main/java/com/fnw/flow/operator/data/repository/FtthConversionRepository.kt b/app/src/main/java/com/fnw/flow/operator/data/repository/FtthConversionRepository.kt
+index a5fe523..3aa866b 100644
+--- a/app/src/main/java/com/fnw/flow/operator/data/repository/FtthConversionRepository.kt
++++ b/app/src/main/java/com/fnw/flow/operator/data/repository/FtthConversionRepository.kt
+@@ -121,6 +121,7 @@ class FtthConversionRepository @Inject constructor(
+                 message = body.error ?: "Conversion failed",
+                 ponr = body.ponr,
+                 custOrderId = body.custOrderId,
++                code = body.errorCode,
+             )
+             throw ex
+         }
+@@ -209,6 +210,7 @@ class FtthConversionRepository @Inject constructor(
+         Timber.w("ftth job start HTTP ${resp.code()}: $raw")
+         throw ConvertException(
+             ErrorMapper.parseBackendError(raw) ?: body?.error ?: friendlyHttpError(resp.code(), action = "start the conversion"),
++            code = ERROR_CODE.find(raw)?.groupValues?.get(1),
+         )
+     }
+ 
+@@ -282,6 +284,7 @@ class FtthConversionRepository @Inject constructor(
+             error = ErrorMapper.parseBackendError(raw) ?: friendlyHttpError(resp.code(), action = "convert the connection"),
+             ponr = PONR_TRUE.containsMatchIn(raw),
+             custOrderId = CUST_ORDER_ID.find(raw)?.groupValues?.get(1),
++            errorCode = ERROR_CODE.find(raw)?.groupValues?.get(1),
+         )
+     }
+ 
+@@ -303,6 +306,7 @@ class FtthConversionRepository @Inject constructor(
+             "Check Order Tracking for this number before trying again."
+         val PONR_TRUE = Regex(""""ponr"\s*:\s*true""")
+         val CUST_ORDER_ID = Regex(""""custOrderId"\s*:\s*"([^"]+)"""")
++        val ERROR_CODE = Regex(""""errorCode"\s*:\s*"([^"]+)"""")
+     }
+ 
+     private inline fun <T> wrap(label: String, block: () -> T): Result<T> =
+@@ -318,6 +322,12 @@ class FtthConversionRepository @Inject constructor(
+         val custOrderId: String? = null,
+         /** BSNL may have taken the order (it was slow to confirm, or we lost track): never retry blindly. */
+         val uncertain: Boolean = false,
+-    ) : Exception(message)
++        /** The server's machine-readable `errorCode`, e.g. [LOOKUP_EXPIRED]; null from older servers. */
++        val code: String? = null,
++    ) : Exception(message) {
++        companion object {
++            const val LOOKUP_EXPIRED = "LOOKUP_EXPIRED"
++        }
++    }
+ }
+ 
+diff --git a/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt b/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
+index 790577e..567dc33 100644
+--- a/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
++++ b/app/src/main/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionViewModel.kt
+@@ -807,7 +807,8 @@ class FtthConversionViewModel @Inject constructor(
+                 remember(lookup.landlineNumber, ok = true, summary = "Converted (Quick) · ${resp.plan.ifBlank { plan.name }}", detail = lookup.customerName, ref = resp.orderNumber)
+             }.onFailure { t ->
+                 val isPonr = mayHaveBeenPlaced(t)
+-                val isSessionExpired = (t.message ?: "").contains("lookup expired", ignoreCase = true)
++                val isSessionExpired = (t as? FtthConversionRepository.ConvertException)?.code == FtthConversionRepository.ConvertException.LOOKUP_EXPIRED ||
++                    (t.message ?: "").contains("lookup expired", ignoreCase = true)   // servers from before errorCode
+                 if (isSessionExpired) {
+                     // Lovable's behavior: auto-refresh lookup, ask user to retry.
+                     // Start the refresh FIRST: quickDoLookup clears quickSubmitError when it
+@@ -979,6 +980,4 @@ class FtthConversionViewModel @Inject constructor(
+     companion object {
+         private fun normalizeLandline(input: String): String? = LandlineNumber.normalize(input)
+     }
+-}
+-    }
+ }
+diff --git a/app/src/test/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionEndToEndTest.kt b/app/src/test/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionEndToEndTest.kt
+index 3a2fb4a..510a292 100644
+--- a/app/src/test/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionEndToEndTest.kt
++++ b/app/src/test/java/com/fnw/flow/operator/ui/screens/tools/ftth/FtthConversionEndToEndTest.kt
+@@ -454,6 +454,23 @@ class FtthConversionEndToEndTest {
+         }
+     }
+ 
++    @Test
++    fun quick_job_lookupExpiredCode_refreshesWhateverTheWording() {
++        backend.jobsEnabled = true
++        seedQuickLookup()
++        // The code decides, not the text: this message never says "lookup expired".
++        backend.startOutcome = 400 to """{"status":"FAILED","error":"Search the number again.","errorCode":"LOOKUP_EXPIRED"}"""
++        vm.quickDoConvert()
++        await("re-lookup fired") { backend.count("/api/ftth/lookup") == 2 && !it.quickLookupLoading }
++        assertEquals("Lookup refreshed. Please review and submit again.", vm.state.value.quickSubmitError)
++        assertFalse(vm.state.value.quickSubmitPonr)
++        awaitToast("session expired info") { it is FtthConversionViewModel.Toast.Info }
++
++        backend.startOutcome = null
++        vm.quickDoConvert()
++        await("converted") { it.quickResult != null }
++    }
++
+     @Test
+     fun quick_job_submittedBlocksAnotherConvert() {
+         val placed = "The order was placed at BSNL, but BSNL was slow to confirm it. Its order number will appear in Order Tracking shortly. Do not submit this number again."
+@@ -598,6 +615,8 @@ private class ScriptedConversionBackend : Dispatcher() {
+     var convertOutcome: Pair<Int, String>? = null
+     /** Off: the /start routes answer 404, as a server without automation/ftth-jobs.js does. */
+     var jobsEnabled = false
++    /** When set, the /start routes answer this instead of STARTED. */
++    var startOutcome: Pair<Int, String>? = null
+     /** What GET /api/ftth/job/{id} reports; null = done, with the order the started route would return. */
+     var jobOutcome: String? = null
+     var jobPollCode = 200
+@@ -621,7 +640,7 @@ private class ScriptedConversionBackend : Dispatcher() {
+         val path = request.path.orEmpty()
+         if (path.startsWith("/api/ftth/") && path.endsWith("/start")) {
+             return if (!jobsEnabled) raw(404, """{"error":"Cannot POST $path"}""")
+-            else json("""{"status":"STARTED","jobId":"$JOB_ID","existing":false}""")
++            else startOutcome?.let { (c, b) -> raw(c, b) } ?: json("""{"status":"STARTED","jobId":"$JOB_ID","existing":false}""")
+         }
+         if (path.startsWith("/api/ftth/job/")) {
+             if (jobPollCode != 200) return raw(jobPollCode, """{"ok":false,"error":"Job not found"}""")
+diff --git a/tools/ftth-robust-test.mjs b/tools/ftth-robust-test.mjs
+index 23d433d..e9e83d8 100644
+--- a/tools/ftth-robust-test.mjs
++++ b/tools/ftth-robust-test.mjs
+@@ -177,6 +177,7 @@ eq('tapping again after it finished returns that finished order, not a new one',
+ eq('the tool log got the order', globalThis.__toolLog?.some((row) => row.toolName === 'ftth-convert' && row.status === 'success' && /^ORD-/.test(row.output?.orderNumber)), true);
+ s = await call('POST /api/ftth/convert/start', { body: { landlineNumber: '0832-1111111', planPrice: 499, exchangeCode: 'X' } });
+ eq('no lookup and nothing running: "Lookup expired", as before', [s.status, s.body.error], [400, 'Lookup expired. Search the number again.']);
++eq('… with the code the app matches on', s.body.errorCode, 'LOOKUP_EXPIRED');
+ s = await call('POST /api/ftth/convert/start', { body: { landlineNumber: '0832-1111111' } });
+ eq('missing fields are named', [s.status, s.body.error], [400, 'Missing: landlineNumber, planPrice, exchangeCode']);
+ j = await call('GET /api/ftth/job/:jobId', { params: { jobId: 'fj_0000000000000000' } });
+diff --git a/tools/ftth/ftth-jobs.js b/tools/ftth/ftth-jobs.js
+index f7a7f83..6bcf5a9 100644
+--- a/tools/ftth/ftth-jobs.js
++++ b/tools/ftth/ftth-jobs.js
+@@ -197,7 +197,8 @@ export async function startQuickConvert(redis, creds, body, { log = null, deps =
+     const lk = await redis.get(lockKey(creds.masterId, landlineNumber));
+     const job = lk ? await getJob(redis, creds.masterId, lk) : null;
+     if (job) return started({ jobId: lk, existing: true, job });
+-    return { status: 400, body: { status: 'FAILED', error: 'Lookup expired. Search the number again.' } };
++    // errorCode is what the app matches on (it refreshes the lookup); `error` is for people.
++    return { status: 400, body: { status: 'FAILED', error: 'Lookup expired. Search the number again.', errorCode: 'LOOKUP_EXPIRED' } };
+   }
+   const lookupData = JSON.parse(cached);
+   if (lookupData._internal) lookupData._internal.addClipManually = body.addClipManually !== false;

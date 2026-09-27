@@ -1,0 +1,38 @@
+From c7587975fb18fb90cdee30569e3d39f00434a148 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 27 Sep 2026 16:02:32 +0000
+Subject: [PATCH 5/5] patch 05: say in the fixtures that the oi26 guard is a
+ stand-in the patch never writes
+
+Verified: patch-ftth-robust.py anchors only on the voiceSupp table and inserts after it; it never writes 'if (oi26)'. The always-true constant cannot reach the live file.
+---
+ tools/ftth/fixtures/ftth-ott.js     | 2 ++
+ tools/ftth/fixtures/ftth-service.js | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/tools/ftth/fixtures/ftth-ott.js b/tools/ftth/fixtures/ftth-ott.js
+index 77aca50..efa6459 100644
+--- a/tools/ftth/fixtures/ftth-ott.js
++++ b/tools/ftth/fixtures/ftth-ott.js
+@@ -23,6 +23,8 @@ export async function ftthConvertOtt(redis, masterId, crmUser, crmPass, lookupDa
+     ACTION: 'START_ORDER_FLOW', BFM_KEY: bfmKey,
+   })).response);
+   const cdId = ip.commonDataId;
++  // Not verbatim: a constant so the voice block always runs here. patch-ftth-robust.py
++  // anchors only on the voiceSupp table below and never writes this guard.
+   const oi26 = 26;
+   if (oi26) {
+     const voiceSupp = [
+diff --git a/tools/ftth/fixtures/ftth-service.js b/tools/ftth/fixtures/ftth-service.js
+index 3f2619e..5f168c3 100644
+--- a/tools/ftth/fixtures/ftth-service.js
++++ b/tools/ftth/fixtures/ftth-service.js
+@@ -29,6 +29,8 @@ export async function ftthConvert(redis, masterId, crmUser, crmPass, lookupData,
+     ACTION: 'START_ORDER_FLOW', BFM_KEY: bfmKey,
+   })).response);
+   const cdId = ip.commonDataId;
++  // Not verbatim: a constant so the voice block always runs here. patch-ftth-robust.py
++  // anchors only on the voiceSupp table below and never writes this guard.
+   const oi26 = 26;
+   if (oi26) {
+     const voiceSupp = [
