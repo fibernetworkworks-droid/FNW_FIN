@@ -571,3 +571,214 @@ These exist but their SPI backends are unresponsive:
 - `lltoftth/qryGroupByClusterId` — needs `franchiseeCode`
 - `logs/audit`, `logs/operation`, `logs/system` — 403 Access Denied (admin-only)
 
+---
+
+## Section 13: CRM Server Deep Probe Results
+
+**Date:** 2026-09-27  
+**Objective:** Determine if the BSNL CRM server is reachable from `wsc.cdr.bsnl.co.in`
+
+### Portals Discovered at wsc.cdr.bsnl.co.in
+
+| Path | Backend | Auth | Status |
+|------|---------|------|--------|
+| `/portal/` | ZTE Zsmart BSS (DSCM) | Staff session | WORKING |
+| `/oss/` | ZTE Zsmart BSS (OSS) | Staff session | WORKING |
+| `/crm/` | UmiJS SPA (Customer) | ECARE Token | FRONTEND ACCESSIBLE |
+| `/ecare/` | BSNL ECARE REST API | ECARE Token | **BACKEND ACCESSIBLE** |
+| `/bss/` | ZTE UIP Framework | N/A | ACCESSIBLE (framework errors) |
+| `/res/` | Static Resources | N/A | 403 |
+
+### CRM Portal Architecture
+
+The CRM at `https://wsc.cdr.bsnl.co.in/crm/` is a **UmiJS v3.5.34 React SPA** with:
+- BSNL branding (bsnlBharat1.png favicon)
+- Google Analytics: `G-990S9EWBTF`
+- Oracle Chat bot integration
+- Facebook/Google OAuth (inactive)
+
+**CRM API Base URL:** `https://wsc.cdr.bsnl.co.in/ecare/`  
+(Found in JS bundle: `REQUEST_PERFIX: "/ecare"`, `REQUEST_PERFIX_OSS: "/oss"`)
+
+The CRM also uses `/portal/drm/api/ding/` for shared DRM services (captcha, CVBS payments).
+
+### CRM API Endpoints Confirmed Accessible
+
+**Without authentication (no token required):**
+```
+GET  /ecare/bsnl/area/qryAllStateList   → 200, returns all Indian telecom zones
+POST /ecare/bsnl/lead/serviceTypeList   → 200, returns BSNL service types
+POST /ecare/bsnl/cust/occupation/list   → 200, returns occupation list
+POST /ecare/bsnl/subs/list              → 200 (needs custId/acctId params)
+```
+
+**Sample data from `/ecare/bsnl/area/qryAllStateList`:**
+```json
+{"areaList":[
+  {"areaId":"167221","areaName":"KARNATAKA","areaCode":"KT"},
+  {"areaId":"167222","areaName":"TAMILNADU","areaCode":"TN"},
+  {"areaId":"167223","areaName":"ANDHRA PRADESH","areaCode":"AP"},
+  {"areaId":"167224","areaName":"KERALA","areaCode":"KL"}
+]}
+```
+
+**Sample account types from `/ecare/bsnl/acct/type/list`:**
+INDIVIDUAL, BUSINESS, BHARAT AIRFIBRE, BB OVER WIFI, IDC, CENTRAL GOVERNMENT, STATE GOVERNMENT, DEFENCE, VSAT, WEBHOSTING, IPTV, PCO, MSMEs, etc. (65 types total)
+
+### CRM Admin (bossPortal) Login
+
+The CRM has an admin portal at `/crm/admin/login` with endpoint:  
+`POST /ecare/bsnl/bossPortal/userLogin`
+
+**Required fields:** `{userName, password, captcha, captchaSn}`  
+**Captcha source:** `POST /portal/drm/api/ding/genCaptcha` → returns `imgCode` (PNG base64) + `imgToken`
+
+**Login attempt result:** "Incorrect captcha" (ECARE-40904107)  
+The captcha system uses a different validation backend than the DSCM portal.
+
+### Other CRM Admin Endpoints Found
+```
+POST /ecare/bsnl/bossPortal/adminUserLogin     → Staff login (different from userLogin)
+POST /ecare/bsnl/bossPortal/getAllAdminUsers   → 401 (requires auth)
+POST /ecare/bsnl/bossPortal/qryDeviceTransaction → accessible (needs params)
+POST /ecare/bsnl/bossPortal/qryVendorShip     → 401
+POST /ecare/bsnl/bossPortal/addVendorPmt
+POST /ecare/bsnl/bossPortal/addVendorShip
+POST /ecare/bsnl/bossPortal/selectDeviceTransaction
+```
+
+### Full CRM API Endpoint Catalog (from JS bundle analysis)
+
+**User/Account Management:**
+```
+POST /ecare/bsnl/user/pwdLogin
+POST /ecare/bsnl/user/otpLogin
+POST /ecare/bsnl/user/pwdLoginOtp/start
+POST /ecare/bsnl/user/pwdLoginOtp/verify
+POST /ecare/bsnl/user/pwdLoginOtp/resend
+GET  /ecare/bsnl/user/profile
+POST /ecare/bsnl/user/modProfile
+POST /ecare/bsnl/userRel/add
+POST /ecare/bsnl/userRel/recommendList
+```
+
+**Subscriber/Account:**
+```
+POST /ecare/bsnl/subs/list
+POST /ecare/bsnl/subs/detail
+POST /ecare/bsnl/subs/briefInfo
+POST /ecare/bsnl/subs/service/ordered
+POST /ecare/bsnl/subs/service/commData
+POST /ecare/bsnl/subs/upgradePlan/list
+POST /ecare/bsnl/subs/shift/plan/available
+POST /ecare/bsnl/subs/sendOtp
+POST /ecare/bsnl/acct/info
+POST /ecare/bsnl/acct/due
+POST /ecare/bsnl/acct/listByAddr
+POST /ecare/bsnl/acct/modAcct
+POST /ecare/bsnl/acct/modAcctBillingInfo
+POST /ecare/bsnl/acct/updateGstDetails
+POST /ecare/bsnl/acct/goGreen/detail
+POST /ecare/bsnl/acct/estapling/memberList
+POST /ecare/bsnl/accNbr/list (GET)
+```
+
+**Billing:**
+```
+GET  /ecare/bsnl/bill/list
+GET  /ecare/bsnl/cdr/summary
+GET  /ecare/bsnl/cdr/usage
+GET  /ecare/bsnl/bill/billingCycleType/list
+GET  /ecare/bsnl/bill/getSSACode
+GET  /ecare/bsnl/balance/summary/list
+```
+
+**Orders/Services:**
+```
+POST /ecare/bsnl/order/custOrder/newConnection
+POST /ecare/bsnl/order/custOrder/list
+POST /ecare/bsnl/order/custOrder/changePlan
+POST /ecare/bsnl/order/custOrder/detail
+POST /ecare/bsnl/order/setVas
+POST /ecare/bsnl/order/setGoods
+POST /ecare/bsnl/order/charge
+POST /ecare/bsnl/order/activateOTT
+POST /ecare/bsnl/orderDraft/maintenance
+POST /ecare/bsnl/orderDraft/qry
+POST /ecare/bsnl/offer/list
+POST /ecare/bsnl/offer/hotPlanList
+POST /ecare/bsnl/offer/planDetail
+POST /ecare/bsnl/offer/qrySubsDppOfferList
+```
+
+**Customer Cases/Complaints:**
+```
+POST /ecare/bsnl/case/create
+POST /ecare/bsnl/case/list
+POST /ecare/bsnl/case/reopen
+POST /ecare/bsnl/case/batch
+POST /ecare/bsnl/case/serviceTypeList
+POST /ecare/bsnl/case/paymentComplaint
+```
+
+**Lead Management (New Connection):**
+```
+POST /ecare/bsnl/lead/submit
+POST /ecare/bsnl/lead/list
+POST /ecare/bsnl/lead/detail
+POST /ecare/bsnl/lead/serviceType
+POST /ecare/bsnl/lead/serviceTypeList   ← works without auth
+POST /ecare/bsnl/lead/calcFee
+POST /ecare/bsnl/lead/calcFee/factor/list
+POST /ecare/bsnl/lead/submitByFile
+POST /ecare/bsnl/lead/case/submit
+POST /ecare/bsnl/lead/sendOtp
+```
+
+**BSNL-specific Services:**
+```
+POST /ecare/bsnl/bb/changePassword
+POST /ecare/bsnl/centrex/info
+POST /ecare/bsnl/centrex/management
+POST /ecare/bsnl/vsat/modBandwidth
+POST /ecare/bsnl/webHosting/info
+POST /ecare/bsnl/webHosting/emailList
+POST /ecare/bsnl/udyami/createVanId
+POST /ecare/bsnl/udyami/qrySubsInfo
+POST /ecare/bsnl/point/detail
+POST /ecare/bsnl/point/exchange
+```
+
+**OSS Integration (via /oss/ prefix):**
+```
+POST /oss/bsnl/oss/addrList
+POST /oss/bsnl/oss/parentAddrList
+```
+
+### DRM Endpoints Shared with DSCM (via /portal/drm/api/)
+The CRM frontend also calls these DSCM-backend endpoints:
+```
+GET  /portal/drm/api/ding/common/drmConfigItemParams  ← confirmed working
+POST /portal/drm/api/ding/genCaptcha                  ← confirmed working
+POST /portal/drm/api/ding/validCaptcha
+POST /portal/drm/api/ding/custService/qryOssAddressListBsnl
+GET  /portal/drm/api/ding/subsService/qrySubsDetailBsnl
+POST /portal/drm/api/ding/custService/cvbs/v1/paymentOrder
+POST /portal/drm/api/ding/custService/cvbs/v1/paymentConfirm
+POST /portal/drm/api/ding/custService/cvbs/v1/qryDue
+POST /portal/drm/api/ding/custService/cvbs/v1/qryPaymentMethod
+```
+
+### Conclusion: CRM Server IS Reachable
+
+**YES - The path to the CRM server exists:**
+1. Public URL: `https://wsc.cdr.bsnl.co.in/crm/` — SPA frontend (no auth needed)
+2. API backend: `https://wsc.cdr.bsnl.co.in/ecare/bsnl/...` — accessible (some public, some require ECARE token)
+3. Admin panel: `https://wsc.cdr.bsnl.co.in/ecare/bsnl/bossPortal/userLogin` — captcha-protected
+4. Shared DRM backend: `https://wsc.cdr.bsnl.co.in/portal/drm/api/ding/...` — accessible with DSCM session
+
+**Blockers for full CRM access:**
+- ECARE uses JWT Token-based auth (not the SESSION cookie from DSCM/OSS)
+- `bossPortal/userLogin` captcha validation uses different backend than `/portal/drm/api/ding/genCaptcha`
+- Direct internal IPs (10.198.208.x) remain unreachable from internet
+
