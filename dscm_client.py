@@ -99,14 +99,19 @@ class DSCMClient:
             return session
         return None
 
-    def _post(self, endpoint: str, body: dict) -> dict:
+    def _post(self, endpoint: str, body: dict, retries: int = 2) -> dict:
+        import time
         url = f"{API_BASE}/{endpoint}"
-        try:
-            r = self._session.post(url, json=body, timeout=30)
-            r.raise_for_status()
-            return r.json()
-        except RequestException as e:
-            return {"error": str(e), "endpoint": endpoint}
+        for attempt in range(retries + 1):
+            try:
+                r = self._session.post(url, json=body, timeout=30)
+                r.raise_for_status()
+                return r.json()
+            except RequestException as e:
+                if attempt < retries:
+                    time.sleep(2 ** attempt)
+                    continue
+                return {"error": str(e), "endpoint": endpoint}
 
     # ── Customer search ──────────────────────────────────────────────────────
 
@@ -145,17 +150,17 @@ class DSCMClient:
                            org_id: str = None, area_id: str = None) -> dict:
         """
         Check if FTTH service is available for a number in this franchise area.
-        Returns the raw response — code '200' means in-area.
+        Uses GET with query params (not POST).
+        Returns the raw response — returnCode '0' means in-area.
         """
         oid = org_id or self.franchise["orgId"]
         aid = area_id or self.franchise["areaId"]
-        url = (f"{API_BASE}/ding/channel/frServiceInfoCheck"
-               f"?orgId={oid}&areaId={aid}")
-        body = {}
+        params = f"orgId={oid}&areaId={aid}"
         if phone:
-            body["phoneNbr"] = phone
+            params += f"&phoneNbr={phone}"
+        url = f"{API_BASE}/ding/channel/frServiceInfoCheck?{params}"
         try:
-            r = self._session.post(url, json=body, timeout=60)
+            r = self._session.get(url, timeout=30)
             r.raise_for_status()
             return r.json()
         except RequestException as e:
@@ -232,6 +237,29 @@ class DSCMClient:
             return subs
         return {**cust, "noSubs": True}
 
+    def find_by_mobile(self, mobile: str, max_pages: int = 270) -> Optional[dict]:
+        """
+        Scan the franchise subscriber list for an entry matching `mobile`.
+        Much slower than a direct lookup but works when only the mobile is known.
+        Returns the orgSubsBindRela dict or None if not found.
+        """
+        import time
+        clean = mobile.replace("-", "").replace(" ", "")
+        for page in range(1, max_pages + 1):
+            result = self.list_franchise_subscribers(page=page, page_size=50)
+            if result.get("error"):
+                time.sleep(2)
+                result = self.list_franchise_subscribers(page=page, page_size=50)
+            subs_list = result.get("list") or []
+            if not subs_list:
+                break
+            for s in subs_list:
+                phone = (s.get("mobilePhone") or "").replace("-", "").replace(" ", "")
+                if clean in phone or phone in clean:
+                    return s
+            time.sleep(0.3)
+        return None
+
     def copper_to_ftth_check(self, phone: str) -> dict:
         """
         Pre-migration check for a copper subscriber.
@@ -245,14 +273,19 @@ class DSCMClient:
             "blockers": [],
             "next_steps": [],
         }
-        # 1. Service area check
+        # 1. Service area check (returnCode "0" = in area, "1" = out of area)
         area_resp = self.check_service_area(phone=phone)
         result["service_area_raw"] = area_resp
-        if area_resp.get("code") == "200":
+        return_code = (area_resp.get("data") or {}).get("returnCode", "1")
+        if area_resp.get("error"):
+            result["in_service_area"] = None
+            result["blockers"].append(f"Service area check failed: {area_resp['error']}")
+        elif return_code == "0":
             result["in_service_area"] = True
         else:
             result["in_service_area"] = False
-            result["blockers"].append(f"Not in service area: {area_resp.get('message')}")
+            msg = (area_resp.get("data") or {}).get("returnMsg", "unknown")
+            result["blockers"].append(f"Not in service area: {msg}")
 
         # 2. Customer lookup
         subs = self.find_subscriber_by_phone(phone)
@@ -314,6 +347,10 @@ def main():
     r.add_argument("subs_id")
     r.add_argument("--session", default="", help="SESSION cookie value")
 
+    # find-mobile
+    fm = sub.add_parser("find-mobile", help="Find subscriber by mobile number (scans all pages)")
+    fm.add_argument("mobile")
+
     # login
     lo = sub.add_parser("login", help="Login to DSCM and print SESSION cookie")
     lo.add_argument("password", help="Plaintext DSCM password (will be AES-encrypted)")
@@ -341,6 +378,13 @@ def main():
         for s in (result.get("list") or [])[:10]:
             print(f"  {s.get('subsId','?'):>12}  {s.get('mobilePhone',''):>12}  "
                   f"{s.get('fullAddress','')[:50]}")
+
+    elif args.cmd == "find-mobile":
+        result = client.find_by_mobile(args.mobile)
+        if result:
+            _pretty(result)
+        else:
+            print(f"Mobile {args.mobile} not found in franchise subscriber list")
 
     elif args.cmd == "reconnect":
         if not args.session:
